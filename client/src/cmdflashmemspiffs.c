@@ -30,7 +30,7 @@ int flashmem_spiffs_load(char *destfn, uint8_t *data, size_t datalen) {
     uint32_t bytes_remaining = datalen;
 
     // fast push mode
-    conn.block_after_ACK = true;
+    g_conn.block_after_ACK = true;
 
     while (bytes_remaining > 0) {
 
@@ -73,7 +73,7 @@ out:
     clearCommandBuffer();
 
     // turn off fast push mode
-    conn.block_after_ACK = false;
+    g_conn.block_after_ACK = false;
 
     // We want to unmount after these to set things back to normal but more than this
     // unmouting ensure that SPIFFS CACHES are all flushed so our file is actually written on memory
@@ -383,7 +383,13 @@ static int CmdFlashMemSpiFFSDump(const char *Cmd) {
         strncpy(fn, dest, dlen);
     }
 
-    saveFile(fn, ".bin", dump, len);
+    // set file extension
+    char *suffix = strchr(fn, '.');
+    if (suffix)
+        saveFile(fn, suffix, dump, len);
+    else
+        saveFile(fn, ".bin", dump, len); // default
+
     if (eml) {
         uint8_t eml_len = 16;
         if (strstr(fn, "class") != NULL)

@@ -38,7 +38,7 @@
 static char *g_android_executable_directory = NULL;
 static char *g_android_user_directory = NULL;
 
-char version_information[] = {""};
+char g_version_information[] = {""};
 
 const char *get_my_executable_directory(void) {
     if (g_android_executable_directory == NULL) {
@@ -69,7 +69,7 @@ void RepaintPictureWindow(void) {}
 int push_cmdscriptfile(char *path, bool stayafter) { return PM3_SUCCESS; }
 
 static bool OpenPm3(void) {
-    if (conn.run) { return true; }
+    if (g_conn.run) { return true; }
     // Open with LocalSocket. Not a tcp connection!
     bool ret = OpenProxmark(session.current_device, "socket:"PM3_LOCAL_SOCKET_SERVER, false, 1000, false, 115200);
     return ret;
@@ -80,7 +80,7 @@ static bool OpenPm3(void) {
  * */
 jint Console(JNIEnv *env, jobject instance, jstring cmd_) {
 
-    if (!conn.run) {
+    if (!g_conn.run) {
         if (OpenPm3() && TestProxmark(session.current_device) == PM3_SUCCESS) {
             LOGD("Connected to device");
             PrintAndLogEx(SUCCESS, "Connected to device");
@@ -109,7 +109,7 @@ jint Console(JNIEnv *env, jobject instance, jstring cmd_) {
  * Is client running!
  * */
 jboolean IsClientRunning(JNIEnv *env, jobject instance) {
-    return (jboolean)((jboolean) conn.run);
+    return (jboolean)((jboolean) g_conn.run);
 }
 
 /*

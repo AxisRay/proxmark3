@@ -29,7 +29,7 @@
 
 static int CmdHelp(const char *Cmd);
 
-const uint8_t paradox_lut[] = {
+static const uint8_t paradox_lut[] = {
     0xDB, 0xFC, 0x3F, 0xC5, 0x50, 0x14, 0x05, 0x47,
     0x9F, 0xED, 0x7D, 0x59, 0x22, 0x84, 0x21, 0x4E,
     0x39, 0x48, 0x12, 0x88, 0x53, 0xDE, 0xBB, 0xE4,
@@ -161,7 +161,7 @@ int demodParadox(bool verbose) {
                   rawLo
                  );
 
-    PrintAndLogEx(DEBUG, "DEBUG: Paradox idx: %d, len: %zu, Printing Demod Buffer:", idx, size);
+    PrintAndLogEx(DEBUG, "DEBUG: Paradox idx: %d, len: %zu, Printing DemodBuffer:", idx, size);
     if (g_debugMode) {
         printDemodBuff(0, false, false, false);
     }

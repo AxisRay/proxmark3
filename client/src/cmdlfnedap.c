@@ -33,9 +33,9 @@
 
 static int CmdHelp(const char *Cmd);
 
-const uint8_t translateTable[10] = {8, 2, 1, 12, 4, 5, 10, 13, 0, 9};
-const uint8_t invTranslateTable[16] = {8, 2, 1, 0xff, 4, 5, 0xff, 0xff, 0, 9, 6, 0xff, 3, 7, 0xff, 0xff};
-const uint8_t preamble[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}; // zero inside
+static const uint8_t translateTable[10] = {8, 2, 1, 12, 4, 5, 10, 13, 0, 9};
+static const uint8_t invTranslateTable[16] = {8, 2, 1, 0xff, 4, 5, 0xff, 0xff, 0, 9, 6, 0xff, 3, 7, 0xff, 0xff};
+static const uint8_t preamble[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}; // zero inside
 
 static uint8_t isEven_64_63(const uint8_t *data) { // 8
     uint32_t tmp[2];
@@ -56,14 +56,14 @@ int demodNedap(bool verbose) {
         return PM3_ESOFT;
     }
 
-    size = DemodBufferLen;
-    if (!preambleSearch(DemodBuffer, (uint8_t *) preamble, sizeof(preamble), &size, &offset)) {
+    size = g_DemodBufferLen;
+    if (!preambleSearch(g_DemodBuffer, (uint8_t *) preamble, sizeof(preamble), &size, &offset)) {
         PrintAndLogEx(DEBUG, "DEBUG: Error - NEDAP: preamble not found");
         return PM3_ESOFT;
     }
 
     // set plot
-    setDemodBuff(DemodBuffer, size, offset);
+    setDemodBuff(g_DemodBuffer, size, offset);
     setClockGrid(g_DemodClock, g_DemodStartIdx + (g_DemodClock * offset));
 
     // sanity checks
@@ -72,7 +72,7 @@ int demodNedap(bool verbose) {
         return PM3_ESOFT;
     }
 
-    if (bits_to_array(DemodBuffer, size, data) != PM3_SUCCESS) {
+    if (bits_to_array(g_DemodBuffer, size, data) != PM3_SUCCESS) {
         PrintAndLogEx(DEBUG, "DEBUG: Error - NEDAP: bits_to_array error\n");
         return PM3_ESOFT;
     }
@@ -529,7 +529,7 @@ static int CmdLFNedapSim(const char *Cmd) {
     PrintAndLogEx(SUCCESS, "Simulating NEDAP - Raw: " _YELLOW_("%s"), sprint_hex_inrow(data, max));
 
     // NEDAP,  Biphase = 2, clock 64, inverted,  (DIPhase == inverted BIphase)
-    lf_asksim_t *payload = calloc(1, sizeof(lf_asksim_t) + DemodBufferLen);
+    lf_asksim_t *payload = calloc(1, sizeof(lf_asksim_t) + g_DemodBufferLen);
     payload->encoding = 2;
     payload->invert = 1;
     payload->separator = 0;
@@ -537,7 +537,7 @@ static int CmdLFNedapSim(const char *Cmd) {
     memcpy(payload->data, bs, (max  *  8));
 
     clearCommandBuffer();
-    SendCommandNG(CMD_LF_ASK_SIMULATE, (uint8_t *)payload,  sizeof(lf_asksim_t) + DemodBufferLen);
+    SendCommandNG(CMD_LF_ASK_SIMULATE, (uint8_t *)payload,  sizeof(lf_asksim_t) + g_DemodBufferLen);
     free(payload);
 
     PacketResponseNG resp;

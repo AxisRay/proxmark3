@@ -5,6 +5,17 @@
 #-----------------------------------------------------------------------------
 
 include ../Makefile.defs
+ifeq ($(PLTNAME),)
+    -include ../Makefile.platform
+    -include ../.Makefile.options.cache
+    ifneq ($(PLATFORM), $(CACHED_PLATFORM))
+        $(error platform definitions have been changed, please "make clean" at the root of the project)
+    endif
+endif
+
+ifeq ($(PLATFORM),PM3ICOPYX)
+  INCLUDES += -DICOPYX
+endif
 
 INSTALLBIN = proxmark3
 INSTALLSHARE = cmdscripts lualibs luascripts pyscripts resources dictionaries
@@ -588,7 +599,7 @@ SRCS =  mifare/aiddesfire.c \
 		loclass/cipherutils.c \
 		loclass/elite_crack.c \
 		loclass/ikeys.c \
-		mifare/desfire_crypto.c \
+		mifare/lrpcrypto.c \
 		mifare/desfirecrypto.c \
 		mifare/desfirecore.c \
         mifare/desfiresecurechan.c \
@@ -771,7 +782,7 @@ endif
 
 $(MBEDTLSLIB): .FORCE
 	$(info [*] MAKE $@)
-	$(Q)$(MAKE) --no-print-directory -C $(MBEDTLSLIBPATH) OBJDIR=$(MBEDTLSLIBCLIENTRELPATH)/$(OBJDIR) BINDIR=$(MBEDTLSLIBCLIENTRELPATH)/$(OBJDIR) all
+	$(Q)$(MAKE) --no-print-directory -C $(MBEDTLSLIBPATH) OBJDIR=$(MBEDTLSLIBCLIENTRELPATH)/$(OBJDIR)/mbedtls BINDIR=$(MBEDTLSLIBCLIENTRELPATH)/$(OBJDIR) all
 
 $(REVENGLIB): .FORCE
 	$(info [*] MAKE $@)

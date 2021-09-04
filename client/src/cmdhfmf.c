@@ -1073,6 +1073,7 @@ static int CmdHF14AMfNested(const char *Cmd) {
         arg_lit0(NULL, "emu", "Fill simulator keys from found keys"),
         arg_lit0(NULL, "dump", "Dump found keys to file"),
         arg_lit0(NULL, "single", "Single sector (defaults to All)"),
+        arg_lit0(NULL, "mem", "Use dictionary from flashmemory"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
@@ -1113,6 +1114,7 @@ static int CmdHF14AMfNested(const char *Cmd) {
     bool transferToEml = arg_get_lit(ctx, 12);
     bool createDumpFile = arg_get_lit(ctx, 13);
     bool singleSector = arg_get_lit(ctx, 14);
+    bool use_flashmemory = arg_get_lit(ctx, 15);
 
     CLIParserFree(ctx);
 
@@ -1223,7 +1225,7 @@ static int CmdHF14AMfNested(const char *Cmd) {
         }
 
         PrintAndLogEx(SUCCESS, "Testing known keys. Sector count "_YELLOW_("%d"), SectorsCnt);
-        int res = mfCheckKeys_fast(SectorsCnt, true, true, 1, ARRAYLEN(g_mifare_default_keys) + 1, keyBlock, e_sector, false);
+        int res = mfCheckKeys_fast(SectorsCnt, true, true, 1, ARRAYLEN(g_mifare_default_keys) + 1, keyBlock, e_sector, use_flashmemory);
         if (res == PM3_SUCCESS) {
             PrintAndLogEx(SUCCESS, "Fast check found all keys");
             goto jumptoend;
@@ -1322,7 +1324,7 @@ jumptoend:
         // transfer them to the emulator
         if (transferToEml) {
             // fast push mode
-            conn.block_after_ACK = true;
+            g_conn.block_after_ACK = true;
             for (int i = 0; i < SectorsCnt; i++) {
                 mfEmlGetMem(keyBlock, FirstBlockOfSector(i) + NumBlocksPerSector(i) - 1, 1);
 
@@ -1334,7 +1336,7 @@ jumptoend:
 
                 if (i == SectorsCnt - 1) {
                     // Disable fast mode on last packet
-                    conn.block_after_ACK = false;
+                    g_conn.block_after_ACK = false;
                 }
                 mfEmlSetMem(keyBlock, FirstBlockOfSector(i) + NumBlocksPerSector(i) - 1, 1);
             }
@@ -1568,7 +1570,7 @@ jumptoend:
     // transfer them to the emulator
     if (transferToEml) {
         // fast push mode
-        conn.block_after_ACK = true;
+        g_conn.block_after_ACK = true;
         for (int i = 0; i < SectorsCnt; i++) {
             mfEmlGetMem(keyBlock, FirstBlockOfSector(i) + NumBlocksPerSector(i) - 1, 1);
 
@@ -1580,7 +1582,7 @@ jumptoend:
 
             if (i == SectorsCnt - 1) {
                 // Disable fast mode on last packet
-                conn.block_after_ACK = false;
+                g_conn.block_after_ACK = false;
             }
             mfEmlSetMem(keyBlock, FirstBlockOfSector(i) + NumBlocksPerSector(i) - 1, 1);
         }
@@ -2818,7 +2820,7 @@ out:
 
         if (transferToEml) {
             // fast push mode
-            conn.block_after_ACK = true;
+            g_conn.block_after_ACK = true;
             uint8_t block[16] = {0x00};
             for (i = 0; i < sectorsCnt; ++i) {
                 uint8_t b = FirstBlockOfSector(i) + NumBlocksPerSector(i) - 1;
@@ -2832,7 +2834,7 @@ out:
 
                 if (i == sectorsCnt - 1) {
                     // Disable fast mode on last packet
-                    conn.block_after_ACK = false;
+                    g_conn.block_after_ACK = false;
                 }
                 mfEmlSetMem(block, b, 1);
             }
@@ -3068,7 +3070,7 @@ static int CmdHF14AMfChk(const char *Cmd) {
     PrintAndLogEx(INFO, "." NOLF);
 
     // fast push mode
-    conn.block_after_ACK = true;
+    g_conn.block_after_ACK = true;
 
     // clear trace log by first check keys call only
     bool clearLog = true;
@@ -3167,7 +3169,7 @@ out:
 
     if (transferToEml) {
         // fast push mode
-        conn.block_after_ACK = true;
+        g_conn.block_after_ACK = true;
         uint8_t block[16] = {0x00};
         for (int i = 0; i < SectorsCnt; ++i) {
             uint8_t blockno = FirstBlockOfSector(i) + NumBlocksPerSector(i) - 1;
@@ -3181,7 +3183,7 @@ out:
 
             if (i == SectorsCnt - 1) {
                 // Disable fast mode on last packet
-                conn.block_after_ACK = false;
+                g_conn.block_after_ACK = false;
             }
             mfEmlSetMem(block, blockno, 1);
         }
@@ -3200,7 +3202,7 @@ out:
     free(e_sector);
 
     // Disable fast mode and send a dummy command to make it effective
-    conn.block_after_ACK = false;
+    g_conn.block_after_ACK = false;
     SendCommandNG(CMD_PING, NULL, 0);
     if (!WaitForResponseTimeout(CMD_PING, NULL, 1000)) {
         PrintAndLogEx(WARNING, "command execution time out");
@@ -3266,13 +3268,13 @@ static int CmdHF14AMfSim(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mf sim",
                   "Simulate MIFARE Classic card",
-                  "hf mf sim --mini                         --> MIFARE Mini\n"
-                  "hf mf sim --1k                           --> MIFARE Classic 1k (default)\n"
-                  "hf mf sim --1k -u 0a0a0a0a               --> MIFARE Classic 1k with 4b UID\n"
-                  "hf mf sim --1k -u 11223344556677         --> MIFARE Classic 1k with 7b UID\n"
-                  "hf mf sim --1k -u 11223344 -i --crack    --> Perform reader attack in interactive mode\n"
-                  "hf mf sim --2k                           --> MIFARE 2k\n"
-                  "hf mf sim --4k                           --> MIFARE 4k");
+                  "hf mf sim --mini                    --> MIFARE Mini\n"
+                  "hf mf sim --1k                      --> MIFARE Classic 1k (default)\n"
+                  "hf mf sim --1k -u 0a0a0a0a          --> MIFARE Classic 1k with 4b UID\n"
+                  "hf mf sim --1k -u 11223344556677    --> MIFARE Classic 1k with 7b UID\n"
+                  "hf mf sim --1k -u 11223344 -i -x    --> Perform reader attack in interactive mode\n"
+                  "hf mf sim --2k                      --> MIFARE 2k\n"
+                  "hf mf sim --4k                      --> MIFARE 4k");
 
     void *argtable[] = {
         arg_param_begin,
@@ -3817,7 +3819,7 @@ int CmdHF14AMfELoad(const char *Cmd) {
     PrintAndLogEx(INFO, "." NOLF);
 
     // fast push mode
-    conn.block_after_ACK = true;
+    g_conn.block_after_ACK = true;
 
     size_t offset = 0;
     int cnt = 0;
@@ -3825,7 +3827,7 @@ int CmdHF14AMfELoad(const char *Cmd) {
     while (datalen && cnt < block_cnt) {
         if (datalen == block_width) {
             // Disable fast mode on last packet
-            conn.block_after_ACK = false;
+            g_conn.block_after_ACK = false;
         }
 
         if (mfEmlSetMem_xt(data + offset, cnt, 1, block_width) != PM3_SUCCESS) {
@@ -4746,11 +4748,11 @@ static int CmdHF14AMfCSave(const char *Cmd) {
         PrintAndLogEx(INFO, "uploading to emulator memory");
         PrintAndLogEx(INFO, "." NOLF);
         // fast push mode
-        conn.block_after_ACK = true;
+        g_conn.block_after_ACK = true;
         for (int i = 0; i < block_cnt; i += 5) {
             if (i == block_cnt - 1) {
                 // Disable fast mode on last packet
-                conn.block_after_ACK = false;
+                g_conn.block_after_ACK = false;
             }
             if (mfEmlSetMem(dump + (i * MFBLOCK_SIZE), i, 5) != PM3_SUCCESS) {
                 PrintAndLogEx(WARNING, "Can't set emul block: %d", i);

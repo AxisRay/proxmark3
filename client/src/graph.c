@@ -17,8 +17,8 @@
 #include "cmddata.h" //for g_debugmode
 
 
-int GraphBuffer[MAX_GRAPH_TRACE_LEN];
-size_t GraphTraceLen;
+int g_GraphBuffer[MAX_GRAPH_TRACE_LEN];
+size_t g_GraphTraceLen;
 
 /* write a manchester bit to the graph
 TODO,  verfy that this doesn't overflow buffer  (iceman)
@@ -28,11 +28,11 @@ void AppendGraph(bool redraw, uint16_t clock, int bit) {
     uint8_t i;
     //set first half the clock bit (all 1's or 0's for a 0 or 1 bit)
     for (i = 0; i < half; ++i)
-        GraphBuffer[GraphTraceLen++] = bit;
+        g_GraphBuffer[g_GraphTraceLen++] = bit;
 
     //set second half of the clock bit (all 0's or 1's for a 0 or 1 bit)
     for (; i < clock; ++i)
-        GraphBuffer[GraphTraceLen++] = bit ^ 1;
+        g_GraphBuffer[g_GraphTraceLen++] = bit ^ 1;
 
     if (redraw)
         RepaintGraphWindow();
@@ -40,34 +40,34 @@ void AppendGraph(bool redraw, uint16_t clock, int bit) {
 
 // clear out our graph window
 size_t ClearGraph(bool redraw) {
-    size_t gtl = GraphTraceLen;
-    memset(GraphBuffer, 0x00, GraphTraceLen);
-    GraphTraceLen = 0;
-    GraphStart = 0;
-    GraphStop = 0;
+    size_t gtl = g_GraphTraceLen;
+    memset(g_GraphBuffer, 0x00, g_GraphTraceLen);
+    g_GraphTraceLen = 0;
+    g_GraphStart = 0;
+    g_GraphStop = 0;
 
-    DemodBufferLen = 0;
+    g_DemodBufferLen = 0;
     if (redraw)
         RepaintGraphWindow();
 
     return gtl;
 }
-// option '1' to save GraphBuffer any other to restore
+// option '1' to save g_GraphBuffer any other to restore
 void save_restoreGB(uint8_t saveOpt) {
     static int SavedGB[MAX_GRAPH_TRACE_LEN];
     static size_t SavedGBlen = 0;
     static bool GB_Saved = false;
-    static int SavedGridOffsetAdj = 0;
+    static int Savedg_GridOffsetAdj = 0;
 
     if (saveOpt == GRAPH_SAVE) { //save
-        memcpy(SavedGB, GraphBuffer, sizeof(GraphBuffer));
-        SavedGBlen = GraphTraceLen;
+        memcpy(SavedGB, g_GraphBuffer, sizeof(g_GraphBuffer));
+        SavedGBlen = g_GraphTraceLen;
         GB_Saved = true;
-        SavedGridOffsetAdj = GridOffset;
+        Savedg_GridOffsetAdj = g_GridOffset;
     } else if (GB_Saved) { //restore
-        memcpy(GraphBuffer, SavedGB, sizeof(GraphBuffer));
-        GraphTraceLen = SavedGBlen;
-        GridOffset = SavedGridOffsetAdj;
+        memcpy(g_GraphBuffer, SavedGB, sizeof(g_GraphBuffer));
+        g_GraphTraceLen = SavedGBlen;
+        g_GridOffset = Savedg_GridOffsetAdj;
         RepaintGraphWindow();
     }
 }
@@ -81,29 +81,29 @@ void setGraphBuf(uint8_t *buff, size_t size) {
         size = MAX_GRAPH_TRACE_LEN;
 
     for (size_t i = 0; i < size; ++i)
-        GraphBuffer[i] = buff[i] - 128;
+        g_GraphBuffer[i] = buff[i] - 128;
 
-    GraphTraceLen = size;
+    g_GraphTraceLen = size;
     RepaintGraphWindow();
 }
 
 size_t getFromGraphBuf(uint8_t *buff) {
     if (buff == NULL) return 0;
-    if (GraphTraceLen == 0) return 0;
+    if (g_GraphTraceLen == 0) return 0;
 
     size_t i;
-    for (i = 0; i < GraphTraceLen; ++i) {
+    for (i = 0; i < g_GraphTraceLen; ++i) {
         //trim
-        if (GraphBuffer[i] > 127) GraphBuffer[i] = 127;
-        if (GraphBuffer[i] < -127) GraphBuffer[i] = -127;
-        buff[i] = (uint8_t)(GraphBuffer[i] + 128);
+        if (g_GraphBuffer[i] > 127) g_GraphBuffer[i] = 127;
+        if (g_GraphBuffer[i] < -127) g_GraphBuffer[i] = -127;
+        buff[i] = (uint8_t)(g_GraphBuffer[i] + 128);
     }
     return i;
 }
 
 // A simple test to see if there is any data inside Graphbuffer.
 bool HasGraphData(void) {
-    if (GraphTraceLen == 0) {
+    if (g_GraphTraceLen == 0) {
         PrintAndLogEx(NORMAL, "No data available, try reading something first");
         return false;
     }
@@ -112,8 +112,8 @@ bool HasGraphData(void) {
 
 bool isGraphBitstream(void) {
     // convert to bitstream if necessary
-    for (int i = 0; i < GraphTraceLen; i++) {
-        if (GraphBuffer[i] > 1 || GraphBuffer[i] < 0) {
+    for (int i = 0; i < g_GraphTraceLen; i++) {
+        if (g_GraphBuffer[i] > 1 || g_GraphBuffer[i] < 0) {
             return false;
         }
     }
@@ -125,16 +125,16 @@ void convertGraphFromBitstream(void) {
 }
 
 void convertGraphFromBitstreamEx(int hi, int low) {
-    for (int i = 0; i < GraphTraceLen; i++) {
-        if (GraphBuffer[i] == hi)
-            GraphBuffer[i] = 127;
-        else if (GraphBuffer[i] == low)
-            GraphBuffer[i] = -127;
+    for (int i = 0; i < g_GraphTraceLen; i++) {
+        if (g_GraphBuffer[i] == hi)
+            g_GraphBuffer[i] = 127;
+        else if (g_GraphBuffer[i] == low)
+            g_GraphBuffer[i] = -127;
         else
-            GraphBuffer[i] = 0;
+            g_GraphBuffer[i] = 0;
     }
 
-    uint8_t *bits = calloc(GraphTraceLen, sizeof(uint8_t));
+    uint8_t *bits = calloc(g_GraphTraceLen, sizeof(uint8_t));
     if (bits == NULL) {
         PrintAndLogEx(DEBUG, "ERR: convertGraphFromBitstreamEx, failed to allocate memory");
         return;

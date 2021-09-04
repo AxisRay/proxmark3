@@ -64,7 +64,7 @@ From "Dismantling iclass":
 #include "mbedtls/des.h"
 #include "optimized_cipherutils.h"
 
-uint8_t pi[35] = {
+static uint8_t pi[35] = {
     0x0F, 0x17, 0x1B, 0x1D, 0x1E, 0x27, 0x2B, 0x2D,
     0x2E, 0x33, 0x35, 0x39, 0x36, 0x3A, 0x3C, 0x47,
     0x4B, 0x4D, 0x4E, 0x53, 0x55, 0x56, 0x59, 0x5A,
@@ -196,7 +196,7 @@ static uint64_t check(uint64_t z) {
     return ck1 | ck2 >> 24;
 }
 
-static void permute(BitstreamIn *p_in, uint64_t z, int l, int r, BitstreamOut *out) {
+static void permute(BitstreamIn_t *p_in, uint64_t z, int l, int r, BitstreamOut_t *out) {
     if (bitsLeft(p_in) == 0)
         return;
 
@@ -251,9 +251,9 @@ void hash0(uint64_t c, uint8_t k[8]) {
     if (x & 1) //Check if x7 is 1
         p = ~p;
 
-    BitstreamIn p_in = { &p, 8, 0 };
+    BitstreamIn_t p_in = { &p, 8, 0 };
     uint8_t outbuffer[] = {0, 0, 0, 0, 0, 0, 0, 0};
-    BitstreamOut out = {outbuffer, 0, 0};
+    BitstreamOut_t out = {outbuffer, 0, 0};
     permute(&p_in, zCaret, 0, 4, &out); //returns 48 bits? or 6 8-bytes
 
     //Out is now a buffer containing six-bit bytes, should be 48 bits

@@ -39,20 +39,19 @@
 #include <time.h>
 #include "emojis.h"
 #include "emojis_alt.h"
-session_arg_t session;
+session_arg_t g_session;
 
-double CursorScaleFactor = 1;
-char CursorScaleFactorUnit[11] = {0};
-double PlotGridX = 0, PlotGridY = 0, PlotGridXdefault = 64, PlotGridYdefault = 64;
-uint32_t CursorCPos = 0, CursorDPos = 0, GraphStop = 0;
-uint32_t GraphStart = 0; // Starting point/offset for the left side of the graph
-double GraphPixelsPerPoint = 1.f; // How many visual pixels are between each sample point (x axis)
+double g_CursorScaleFactor = 1;
+char g_CursorScaleFactorUnit[11] = {0};
+double g_PlotGridX = 0, g_PlotGridY = 0, g_PlotGridXdefault = 64, g_PlotGridYdefault = 64;
+uint32_t g_CursorCPos = 0, g_CursorDPos = 0, g_GraphStop = 0;
+uint32_t g_GraphStart = 0; // Starting point/offset for the left side of the graph
+double g_GraphPixelsPerPoint = 1.f; // How many visual pixels are between each sample point (x axis)
 static bool flushAfterWrite = 0;
-double GridOffset = 0;
-bool GridLocked = false;
-bool showDemod = true;
+double g_GridOffset = 0;
+bool g_GridLocked = false;
 
-pthread_mutex_t print_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t g_print_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void fPrintAndLog(FILE *stream, const char *fmt, ...);
 
@@ -188,7 +187,7 @@ void PrintAndLogEx(logLevel_t level, const char *fmt, ...) {
         return;
 
     // skip HINT messages if client has hints turned off i.e. 'HINT 0'
-    if (session.show_hints == false && level == HINT)
+    if (g_session.show_hints == false && level == HINT)
         return;
 
     char prefix[40] = {0};
@@ -203,14 +202,14 @@ void PrintAndLogEx(logLevel_t level, const char *fmt, ...) {
                                   };
     switch (level) {
         case ERR:
-            if (session.emoji_mode == EMO_EMOJI)
+            if (g_session.emoji_mode == EMO_EMOJI)
                 strncpy(prefix,  "[" _RED_("!!") "] :rotating_light: ", sizeof(prefix) - 1);
             else
                 strncpy(prefix, "[" _RED_("!!") "] ", sizeof(prefix) - 1);
             stream = stderr;
             break;
         case FAILED:
-            if (session.emoji_mode == EMO_EMOJI)
+            if (g_session.emoji_mode == EMO_EMOJI)
                 strncpy(prefix, "[" _RED_("-") "] :no_entry: ", sizeof(prefix) - 1);
             else
                 strncpy(prefix, "[" _RED_("-") "] ", sizeof(prefix) - 1);
@@ -225,7 +224,7 @@ void PrintAndLogEx(logLevel_t level, const char *fmt, ...) {
             strncpy(prefix, "[" _GREEN_("+") "] ", sizeof(prefix) - 1);
             break;
         case WARNING:
-            if (session.emoji_mode == EMO_EMOJI)
+            if (g_session.emoji_mode == EMO_EMOJI)
                 strncpy(prefix, "[" _CYAN_("!") "] :warning:  ", sizeof(prefix) - 1);
             else
                 strncpy(prefix, "[" _CYAN_("!") "] ", sizeof(prefix) - 1);
@@ -234,7 +233,7 @@ void PrintAndLogEx(logLevel_t level, const char *fmt, ...) {
             strncpy(prefix, "[" _YELLOW_("=") "] ", sizeof(prefix) - 1);
             break;
         case INPLACE:
-            if (session.emoji_mode == EMO_EMOJI) {
+            if (g_session.emoji_mode == EMO_EMOJI) {
                 strncpy(prefix, spinner_emoji[PrintAndLogEx_spinidx], sizeof(prefix) - 1);
                 PrintAndLogEx_spinidx++;
                 if (PrintAndLogEx_spinidx >= ARRAYLEN(spinner_emoji))
@@ -289,8 +288,8 @@ void PrintAndLogEx(logLevel_t level, const char *fmt, ...) {
         if (level == INPLACE) {
             char buffer3[sizeof(buffer2)] = {0};
             char buffer4[sizeof(buffer2)] = {0};
-            memcpy_filter_ansi(buffer3, buffer2, sizeof(buffer2), !session.supports_colors);
-            memcpy_filter_emoji(buffer4, buffer3, sizeof(buffer3), session.emoji_mode);
+            memcpy_filter_ansi(buffer3, buffer2, sizeof(buffer2), !g_session.supports_colors);
+            memcpy_filter_emoji(buffer4, buffer3, sizeof(buffer3), g_session.emoji_mode);
             fprintf(stream, "\r%s", buffer4);
             fflush(stream);
         } else {
@@ -307,10 +306,10 @@ static void fPrintAndLog(FILE *stream, const char *fmt, ...) {
     char buffer2[MAX_PRINT_BUFFER] = {0};
     char buffer3[MAX_PRINT_BUFFER] = {0};
     // lock this section to avoid interlacing prints from different threads
-    pthread_mutex_lock(&print_lock);
+    pthread_mutex_lock(&g_print_lock);
     bool linefeed = true;
 
-    if (logging && session.incognito) {
+    if (logging && g_session.incognito) {
         logging = 0;
     }
     if ((g_printAndLog & PRINTANDLOG_LOG) && logging && !logfile) {
@@ -331,7 +330,7 @@ static void fPrintAndLog(FILE *stream, const char *fmt, ...) {
                 logging = 0;
             } else {
 
-                if (session.supports_colors) {
+                if (g_session.supports_colors) {
                     printf("["_YELLOW_("=")"] Session log " _YELLOW_("%s") "\n", my_logfile_path);
                 } else {
                     printf("[=] Session log %s\n", my_logfile_path);
@@ -368,10 +367,10 @@ static void fPrintAndLog(FILE *stream, const char *fmt, ...) {
         linefeed = false;
         buffer[strlen(buffer) - 1] = 0;
     }
-    bool filter_ansi = !session.supports_colors;
+    bool filter_ansi = !g_session.supports_colors;
     memcpy_filter_ansi(buffer2, buffer, sizeof(buffer), filter_ansi);
     if (g_printAndLog & PRINTANDLOG_PRINT) {
-        memcpy_filter_emoji(buffer3, buffer2, sizeof(buffer2), session.emoji_mode);
+        memcpy_filter_emoji(buffer3, buffer2, sizeof(buffer2), g_session.emoji_mode);
         fprintf(stream, "%s", buffer3);
         if (linefeed)
             fprintf(stream, "\n");
@@ -405,7 +404,7 @@ static void fPrintAndLog(FILE *stream, const char *fmt, ...) {
         fflush(stdout);
 
     //release lock
-    pthread_mutex_unlock(&print_lock);
+    pthread_mutex_unlock(&g_print_lock);
 }
 
 void SetFlushAfterWrite(bool value) {
@@ -662,7 +661,7 @@ void print_progress(size_t count, uint64_t max, barMode_t style) {
         "\xe2\x96\x88",
     };
 
-    int mode = (session.emoji_mode == EMO_EMOJI);
+    int mode = (g_session.emoji_mode == EMO_EMOJI);
 
     const char *block[] = {"#", "\xe2\x96\x88"};
     // use a 3-byte space in emoji mode to ease computations
@@ -695,7 +694,7 @@ void print_progress(size_t count, uint64_t max, barMode_t style) {
     char *cbar = (char *)calloc(collen, sizeof(uint8_t));
 
     // Add colors
-    if (session.supports_colors) {
+    if (g_session.supports_colors) {
         int p60 = unit * (width * 60 / 100);
         int p20 = unit * (width * 20 / 100);
         snprintf(cbar,  collen,  _GREEN_("%.*s"), p60, bar);

@@ -33,12 +33,12 @@
 #include "nfc/ndef.h"      // NDEFRecordsDecodeAndPrint
 #include "cmdnfc.h"        // print_type4_cc_info
 
-bool APDUInFramingEnable = true;
+static bool APDUInFramingEnable = true;
 
 static int CmdHelp(const char *Cmd);
 static int waitCmd(bool i_select, uint32_t timeout, bool verbose);
 
-static const manufactureName manufactureMapping[] = {
+static const manufactureName_t manufactureMapping[] = {
     // ID,  "Vendor Country"
     { 0x01, "Motorola UK" },
     { 0x02, "ST Microelectronics SA France" },
@@ -169,7 +169,7 @@ const char *getTagInfo(uint8_t uid) {
     return manufactureMapping[ARRAYLEN(manufactureMapping) - 1].desc;
 }
 
-static const hintAIDListT hintAIDList[] = {
+static const hintAIDList_t hintAIDList[] = {
     // AID, AID len, name, hint - how to use
     { "\xA0\x00\x00\x06\x47\x2F\x00\x01", 8, "FIDO", "hf fido" },
     { "\xA0\x00\x00\x03\x08\x00\x00\x10\x00\x01\x00", 11, "PIV", "" },
@@ -181,15 +181,15 @@ static const hintAIDListT hintAIDList[] = {
 };
 
 // iso14a apdu input frame length
-static uint16_t g_frame_len = 0;
-uint16_t atsFSC[] = {16, 24, 32, 40, 48, 64, 96, 128, 256};
+static uint16_t gs_frame_len = 0;
+static uint16_t atsFSC[] = {16, 24, 32, 40, 48, 64, 96, 128, 256};
 
 static int CmdHF14AList(const char *Cmd) {
     return CmdTraceListAlias(Cmd, "hf 14a", "14a");
 }
 
 int hf14a_getconfig(hf14a_config *config) {
-    if (!session.pm3_present) return PM3_ENOTTY;
+    if (!g_session.pm3_present) return PM3_ENOTTY;
 
     if (config == NULL)
         return PM3_EINVARG;
@@ -207,7 +207,7 @@ int hf14a_getconfig(hf14a_config *config) {
 }
 
 int hf14a_setconfig(hf14a_config *config, bool verbose) {
-    if (!session.pm3_present) return PM3_ENOTTY;
+    if (!g_session.pm3_present) return PM3_ENOTTY;
 
     clearCommandBuffer();
     if (config != NULL) {
@@ -247,7 +247,7 @@ static int hf_14a_config_example(void) {
     return PM3_SUCCESS;
 }
 static int CmdHf14AConfig(const char *Cmd) {
-    if (!session.pm3_present) return PM3_ENOTTY;
+    if (!g_session.pm3_present) return PM3_ENOTTY;
 
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf 14a config",
@@ -404,7 +404,10 @@ int Hf14443_4aGetCardData(iso14a_card_select_t *card) {
         return 1;
     }
 
-    PrintAndLogEx(SUCCESS, " ATS: %s", sprint_hex(card->ats, card->ats_len));
+    if (card->ats_len == card->ats[0] + 2)
+        PrintAndLogEx(SUCCESS, " ATS: [%d] %s", card->ats[0], sprint_hex(card->ats, card->ats[0]));
+    else
+        PrintAndLogEx(SUCCESS, " ATS: [%d] %s", card->ats_len, sprint_hex(card->ats, card->ats_len));
     return 0;
 }
 
@@ -498,7 +501,10 @@ static int CmdHF14AReader(const char *Cmd) {
                 PrintAndLogEx(SUCCESS, " SAK: " _GREEN_("%02x [%" PRIu64 "]"), card.sak, resp.oldarg[0]);
 
                 if (card.ats_len >= 3) { // a valid ATS consists of at least the length byte (TL) and 2 CRC bytes
-                    PrintAndLogEx(SUCCESS, " ATS: " _GREEN_("%s"), sprint_hex(card.ats, card.ats_len));
+                    if (card.ats_len == card.ats[0] + 2)
+                        PrintAndLogEx(SUCCESS, " ATS: "  _GREEN_("%s"), sprint_hex(card.ats, card.ats[0]));
+                    else
+                        PrintAndLogEx(SUCCESS, " ATS: [%d] "  _GREEN_("%s"), card.ats_len, sprint_hex(card.ats, card.ats_len));
                 }
             }
             if (!disconnectAfter) {
@@ -770,41 +776,10 @@ int ExchangeRAW14a(uint8_t *datain, int datainlen, bool activateField, bool leav
     *dataoutlen = 0;
 
     if (activateField) {
-        PacketResponseNG resp;
-        responseNum = 0;
-
-        // Anticollision + SELECT card
-        SendCommandMIX(CMD_HF_ISO14443A_READER, ISO14A_CONNECT | ISO14A_NO_DISCONNECT, 0, 0, NULL, 0);
-        if (!WaitForResponseTimeout(CMD_ACK, &resp, 1500)) {
-            if (!silentMode) PrintAndLogEx(ERR, "Proxmark3 connection timeout.");
-            return 1;
-        }
-
-        // check result
-        if (resp.oldarg[0] == 0) {
-            if (!silentMode) PrintAndLogEx(ERR, "No card in field.");
-            return 1;
-        }
-
-        if (resp.oldarg[0] != 1 && resp.oldarg[0] != 2) {
-            if (!silentMode) PrintAndLogEx(ERR, "Card not in iso14443-4. res=%" PRId64 ".", resp.oldarg[0]);
-            return 1;
-        }
-
-        if (resp.oldarg[0] == 2) { // 0: couldn't read, 1: OK, with ATS, 2: OK, no ATS, 3: proprietary Anticollision
-            // get ATS
-            uint8_t rats[] = { 0xE0, 0x80 }; // FSDI=8 (FSD=256), CID=0
-            SendCommandMIX(CMD_HF_ISO14443A_READER, ISO14A_RAW | ISO14A_APPEND_CRC | ISO14A_NO_DISCONNECT, 2, 0, rats, sizeof(rats));
-            if (!WaitForResponseTimeout(CMD_ACK, &resp, 1500)) {
-                if (!silentMode) PrintAndLogEx(ERR, "Proxmark3 connection timeout.");
-                return 1;
-            }
-
-            if (resp.oldarg[0] == 0) { // ats_len
-                if (!silentMode) PrintAndLogEx(ERR, "Can't get ATS.");
-                return 1;
-            }
-        }
+        // select with no disconnect and set gs_frame_len
+        int selres = SelectCard14443A_4(false, !silentMode, NULL);
+        if (selres != PM3_SUCCESS)
+            return selres;
     }
 
     if (leaveSignalON)
@@ -860,7 +835,7 @@ int ExchangeRAW14a(uint8_t *datain, int datainlen, bool activateField, bool leav
 int SelectCard14443A_4(bool disconnect, bool verbose, iso14a_card_select_t *card) {
 
     // global vars should be prefixed with g_
-    g_frame_len = 0;
+    gs_frame_len = 0;
 
     if (card) {
         memset(card, 0, sizeof(iso14a_card_select_t));
@@ -909,7 +884,7 @@ int SelectCard14443A_4(bool disconnect, bool verbose, iso14a_card_select_t *card
         if (resp.oldarg[0] > 1) {
             uint8_t fsci = resp.data.asBytes[1] & 0x0f;
             if (fsci < ARRAYLEN(atsFSC)) {
-                g_frame_len = atsFSC[fsci];
+                gs_frame_len = atsFSC[fsci];
             }
         }
     } else {
@@ -918,7 +893,7 @@ int SelectCard14443A_4(bool disconnect, bool verbose, iso14a_card_select_t *card
         if (vcard->ats_len > 1) {
             uint8_t fsci = vcard->ats[1] & 0x0f;
             if (fsci < ARRAYLEN(atsFSC)) {
-                g_frame_len = atsFSC[fsci];
+                gs_frame_len = atsFSC[fsci];
             }
         }
 
@@ -940,7 +915,7 @@ static int CmdExchangeAPDU(bool chainingin, uint8_t *datain, int datainlen, bool
     *chainingout = false;
 
     if (activateField) {
-        // select with no disconnect and set g_frame_len
+        // select with no disconnect and set gs_frame_len
         int selres = SelectCard14443A_4(false, true, NULL);
         if (selres != PM3_SUCCESS)
             return selres;
@@ -1027,14 +1002,14 @@ int ExchangeAPDU14a(uint8_t *datain, int datainlen, bool activateField, bool lea
 
     // 3 byte here - 1b framing header, 2b crc16
     if (APDUInFramingEnable &&
-            ((g_frame_len && (datainlen > g_frame_len - 3)) || (datainlen > PM3_CMD_DATA_SIZE - 3))) {
+            ((gs_frame_len && (datainlen > gs_frame_len - 3)) || (datainlen > PM3_CMD_DATA_SIZE - 3))) {
 
         int clen = 0;
 
         bool vActivateField = activateField;
 
         do {
-            int vlen = MIN(g_frame_len - 3, datainlen - clen);
+            int vlen = MIN(gs_frame_len - 3, datainlen - clen);
             bool chainBlockNotLast = ((clen + vlen) < datainlen);
 
             *dataoutlen = 0;
@@ -1150,7 +1125,7 @@ static int CmdHF14AAPDU(const char *Cmd) {
 
         CLIGetHexBLessWithReturn(ctx, 8, apdudata, &apdudatalen, 1 + 2);
 
-        APDUStruct apdu;
+        APDU_t apdu;
         apdu.cla = header[0];
         apdu.ins = header[1];
         apdu.p1 = header[2];
@@ -1193,7 +1168,7 @@ static int CmdHF14AAPDU(const char *Cmd) {
     PrintAndLogEx(SUCCESS, ">>> %s", sprint_hex_inrow(data, datalen));
 
     if (decodeAPDU) {
-        APDUStruct apdu;
+        APDU_t apdu;
 
         if (APDUDecode(data, datalen, &apdu) == 0)
             APDUPrint(apdu);
@@ -1596,9 +1571,9 @@ typedef struct {
     uint8_t uid0;
     uint8_t uid1;
     const char *desc;
-} uid_label_name;
+} uid_label_name_t;
 
-const uid_label_name uid_label_map[] = {
+static const uid_label_name_t uid_label_map[] = {
     // UID0, UID1, TEXT
     {0x02, 0x84, "M24SR64-Y"},
     {0x02, 0xA3, "25TA02KB-P"},

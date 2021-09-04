@@ -65,7 +65,7 @@ typedef struct {
     const char *desc;
 } productName_t;
 
-const productName_t uidmapping[] = {
+static const productName_t uidmapping[] = {
 
     // UID, #significant Bits, "Vendor(+Product)"
     { 0xE001000000000000LL, 16, "Motorola UK" },
@@ -510,7 +510,7 @@ static int CmdHF15Demod(const char *Cmd) {
     int max = 0, maxPos = 0;
     int skip = 4;
 
-    if (GraphTraceLen < 1000) {
+    if (g_GraphTraceLen < 1000) {
         PrintAndLogEx(FAILED, "Too few samples in GraphBuffer. Need more than 1000");
         PrintAndLogEx(HINT, "Run " _YELLOW_("`hf 15 samples`") " to collect and download data");
         return PM3_ESOFT;
@@ -520,7 +520,7 @@ static int CmdHF15Demod(const char *Cmd) {
     for (i = 0; i < 1000; i++) {
         int corr = 0;
         for (j = 0; j < ARRAYLEN(FrameSOF); j += skip) {
-            corr += FrameSOF[j] * GraphBuffer[i + (j / skip)];
+            corr += FrameSOF[j] * g_GraphBuffer[i + (j / skip)];
         }
         if (corr > max) {
             max = corr;
@@ -538,13 +538,13 @@ static int CmdHF15Demod(const char *Cmd) {
     for (;;) {
         int corr0 = 0, corr1 = 0, corrEOF = 0;
         for (j = 0; j < ARRAYLEN(Logic0); j += skip) {
-            corr0 += Logic0[j] * GraphBuffer[i + (j / skip)];
+            corr0 += Logic0[j] * g_GraphBuffer[i + (j / skip)];
         }
         for (j = 0; j < ARRAYLEN(Logic1); j += skip) {
-            corr1 += Logic1[j] * GraphBuffer[i + (j / skip)];
+            corr1 += Logic1[j] * g_GraphBuffer[i + (j / skip)];
         }
         for (j = 0; j < ARRAYLEN(FrameEOF); j += skip) {
-            corrEOF += FrameEOF[j] * GraphBuffer[i + (j / skip)];
+            corrEOF += FrameEOF[j] * g_GraphBuffer[i + (j / skip)];
         }
         // Even things out by the length of the target waveform.
         corr0 *= 4;
@@ -566,7 +566,7 @@ static int CmdHF15Demod(const char *Cmd) {
             mask = 0x01;
         }
 
-        if ((i + (int)ARRAYLEN(FrameEOF)) >= GraphTraceLen) {
+        if ((i + (int)ARRAYLEN(FrameEOF)) >= g_GraphTraceLen) {
             PrintAndLogEx(INFO, "ran off end!");
             break;
         }

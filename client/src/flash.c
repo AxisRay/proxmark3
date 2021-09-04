@@ -76,8 +76,8 @@ static int chipid_to_mem_avail(uint32_t iChipID) {
 
 // Turn PHDRs into flasher segments, checking for PHDR sanity and merging adjacent
 // unaligned segments if needed
-static int build_segs_from_phdrs(flash_file_t *ctx, FILE *fd, Elf32_Phdr *phdrs, uint16_t num_phdrs, uint32_t flash_end) {
-    Elf32_Phdr *phdr = phdrs;
+static int build_segs_from_phdrs(flash_file_t *ctx, FILE *fd, Elf32_Phdr_t *phdrs, uint16_t num_phdrs, uint32_t flash_end) {
+    Elf32_Phdr_t *phdr = phdrs;
     flash_seg_t *seg;
     uint32_t last_end = 0;
 
@@ -231,8 +231,8 @@ static int check_segs(flash_file_t *ctx, int can_write_bl, uint32_t flash_end) {
 // Load an ELF file and prepare it for flashing
 int flash_load(flash_file_t *ctx, const char *name, int can_write_bl, int flash_size) {
     FILE *fd;
-    Elf32_Ehdr ehdr;
-    Elf32_Phdr *phdrs = NULL;
+    Elf32_Ehdr_t ehdr;
+    Elf32_Phdr_t *phdrs = NULL;
     uint16_t num_phdrs;
     uint32_t flash_end  = FLASH_START + flash_size;
     int res = PM3_EUNDEF;
@@ -272,7 +272,7 @@ int flash_load(flash_file_t *ctx, const char *name, int can_write_bl, int flash_
         res = PM3_EFILE;
         goto fail;
     }
-    if (le16(ehdr.e_phentsize) != sizeof(Elf32_Phdr)) {
+    if (le16(ehdr.e_phentsize) != sizeof(Elf32_Phdr_t)) {
         // could be a structure padding issue...
         PrintAndLogEx(ERR, "Either the ELF file or this code is made of fail");
         res = PM3_EFILE;
@@ -280,7 +280,7 @@ int flash_load(flash_file_t *ctx, const char *name, int can_write_bl, int flash_
     }
     num_phdrs = le16(ehdr.e_phnum);
 
-    phdrs = calloc(le16(ehdr.e_phnum) * sizeof(Elf32_Phdr), sizeof(uint8_t));
+    phdrs = calloc(le16(ehdr.e_phnum) * sizeof(Elf32_Phdr_t), sizeof(uint8_t));
     if (!phdrs) {
         PrintAndLogEx(ERR, "Out of memory");
         res = PM3_EMALLOC;
@@ -291,7 +291,7 @@ int flash_load(flash_file_t *ctx, const char *name, int can_write_bl, int flash_
         res = PM3_EFILE;
         goto fail;
     }
-    if (fread(phdrs, sizeof(Elf32_Phdr), num_phdrs, fd) != num_phdrs) {
+    if (fread(phdrs, sizeof(Elf32_Phdr_t), num_phdrs, fd) != num_phdrs) {
         res = PM3_EFILE;
         PrintAndLogEx(ERR, "Error while reading ELF PHDRs");
         goto fail;
@@ -374,11 +374,11 @@ static int enter_bootloader(char *serial_port_name) {
             PrintAndLogEx(SUCCESS, "Press and hold down button NOW if your bootloader requires it.");
         }
         msleep(100);
-        CloseProxmark(session.current_device);
+        CloseProxmark(g_session.current_device);
         // Let time to OS to make the port disappear
         msleep(1000);
 
-        if (OpenProxmark(&session.current_device, serial_port_name, true, 60, true, FLASHMODE_SPEED)) {
+        if (OpenProxmark(&g_session.current_device, serial_port_name, true, 60, true, FLASHMODE_SPEED)) {
             PrintAndLogEx(NORMAL, _GREEN_(" found"));
             return PM3_SUCCESS;
         } else {
@@ -404,9 +404,9 @@ static int wait_for_ack(PacketResponseNG *ack) {
     return PM3_SUCCESS;
 }
 
-static bool g_printed_msg = false;
+static bool gs_printed_msg = false;
 static void flash_suggest_update_bootloader(void) {
-    if (g_printed_msg)
+    if (gs_printed_msg)
         return;
 
     PrintAndLogEx(ERR, _RED_("It is recommended that you first" _YELLOW_(" update your bootloader") _RED_(" alone,")));
@@ -416,7 +416,7 @@ static void flash_suggest_update_bootloader(void) {
     PrintAndLogEx(ERR, " 2)   ./pm3-flash-all");
     PrintAndLogEx(ERR, " 3)   ./pm3");
     PrintAndLogEx(INFO, "--------------------------------------------------------");
-    g_printed_msg = true;
+    gs_printed_msg = true;
 }
 
 static void flash_suggest_update_flasher(void) {
@@ -522,7 +522,11 @@ static int write_block(uint32_t address, uint8_t *data, uint32_t length) {
     memset(block_buf, 0xFF, BLOCK_SIZE);
     memcpy(block_buf, data, length);
     PacketResponseNG resp;
+#if defined ICOPYX
+    SendCommandBL(CMD_FINISH_WRITE, address, 0xff, 0x1fd, block_buf, length);
+#else
     SendCommandBL(CMD_FINISH_WRITE, address, 0, 0, block_buf, length);
+#endif
     int ret = wait_for_ack(&resp);
     if (ret && resp.oldarg[0]) {
         uint32_t lock_bits = resp.oldarg[0] >> 16;
@@ -537,7 +541,7 @@ static int write_block(uint32_t address, uint8_t *data, uint32_t length) {
     return ret;
 }
 
-const char ice[] =
+static const char ice[] =
     "...................................................................\n        @@@  @@@@@@@ @@@@@@@@ @@@@@@@@@@   @@@@@@  @@@  @@@\n"
     "        @@! !@@      @@!      @@! @@! @@! @@!  @@@ @@!@!@@@\n        !!@ !@!      @!!!:!   @!! !!@ @!@ @!@!@!@! @!@@!!@!\n"
     "        !!: :!!      !!:      !!:     !!: !!:  !!! !!:  !!!\n        :    :: :: : : :: :::  :      :    :   : : ::    : \n"
@@ -552,7 +556,7 @@ int flash_write(flash_file_t *ctx) {
 
     PrintAndLogEx(SUCCESS, "Writing segments for file: %s", ctx->filename);
 
-    bool filter_ansi = !session.supports_colors;
+    bool filter_ansi = !g_session.supports_colors;
 
     for (int i = 0; i < ctx->num_segs; i++) {
         flash_seg_t *seg = &ctx->segments[i];

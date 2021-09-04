@@ -113,22 +113,22 @@ static bool em4x05_download_samples(void) {
 static int doPreambleSearch(size_t *startIdx) {
 
     // sanity check
-    if (DemodBufferLen < EM_PREAMBLE_LEN) {
-        PrintAndLogEx(DEBUG, "DEBUG: Error - EM4305 demodbuffer too small");
+    if (g_DemodBufferLen < EM_PREAMBLE_LEN) {
+        PrintAndLogEx(DEBUG, "DEBUG: Error - EM4305 DemodBuffer too small");
         return PM3_ESOFT;
     }
 
     // set size to 11 to only test first 3 positions for the preamble
     // do not set it too long else an error preamble followed by 010 could be seen as success.
-    size_t size = (11 > DemodBufferLen) ? DemodBufferLen : 11;
+    size_t size = (11 > g_DemodBufferLen) ? g_DemodBufferLen : 11;
     *startIdx = 0;
 
     // skip first two 0 bits as they might have been missed in the demod
     uint8_t preamble[EM_PREAMBLE_LEN] = {0, 0, 0, 0, 1, 0, 1, 0};
-    if (!preambleSearchEx(DemodBuffer, preamble, EM_PREAMBLE_LEN, &size, startIdx, true)) {
+    if (!preambleSearchEx(g_DemodBuffer, preamble, EM_PREAMBLE_LEN, &size, startIdx, true)) {
 
         uint8_t errpreamble[EM_PREAMBLE_LEN] = {0, 0, 0, 0, 0, 0, 0, 1};
-        if (!preambleSearchEx(DemodBuffer, errpreamble, EM_PREAMBLE_LEN, &size, startIdx, true)) {
+        if (!preambleSearchEx(g_DemodBuffer, errpreamble, EM_PREAMBLE_LEN, &size, startIdx, true)) {
             PrintAndLogEx(DEBUG, "DEBUG: Error - EM4305 preamble not found :: %zu", *startIdx);
             return PM3_ESOFT;
         }
@@ -168,14 +168,14 @@ static bool detectPSK(void) {
     }
 
     // In order to hit the INVERT,  we need to demod here
-    if (DemodBufferLen < 11) {
+    if (g_DemodBufferLen < 11) {
         PrintAndLogEx(INFO, " demod buff len less than PREAMBLE lEN");
     }
 
-    size_t size = (11 > DemodBufferLen) ? DemodBufferLen : 11;
+    size_t size = (11 > g_DemodBufferLen) ? g_DemodBufferLen : 11;
     size_t startIdx = 0;
     uint8_t preamble[EM_PREAMBLE_LEN] = {0, 0, 0, 0, 1, 0, 1, 0};
-    if (!preambleSearchEx(DemodBuffer, preamble, EM_PREAMBLE_LEN, &size, &startIdx, true)) {
+    if (!preambleSearchEx(g_DemodBuffer, preamble, EM_PREAMBLE_LEN, &size, &startIdx, true)) {
 
         //try psk1 inverted
         ans = PSKDemod(0, 1, 6, false);
@@ -184,7 +184,7 @@ static bool detectPSK(void) {
             return false;
         }
 
-        if (!preambleSearchEx(DemodBuffer, preamble, EM_PREAMBLE_LEN, &size, &startIdx, true)) {
+        if (!preambleSearchEx(g_DemodBuffer, preamble, EM_PREAMBLE_LEN, &size, &startIdx, true)) {
             PrintAndLogEx(DEBUG, "DEBUG: Error - EM: PSK1 inverted Demod failed 2");
             return false;
         }
@@ -237,19 +237,19 @@ static int em4x05_setdemod_buffer(uint32_t *word, size_t idx) {
 
     //test for even parity bits.
     uint8_t parity[45] = {0};
-    memcpy(parity, DemodBuffer, 45);
-    if (!em4x05_col_parity_test(DemodBuffer + idx + EM_PREAMBLE_LEN, 45, 5, 9, 0)) {
+    memcpy(parity, g_DemodBuffer, 45);
+    if (!em4x05_col_parity_test(g_DemodBuffer + idx + EM_PREAMBLE_LEN, 45, 5, 9, 0)) {
         PrintAndLogEx(DEBUG, "DEBUG: Error - End Parity check failed");
         return PM3_ESOFT;
     }
 
     // test for even parity bits and remove them. (leave out the end row of parities so 36 bits)
-    if (!removeParity(DemodBuffer, idx + EM_PREAMBLE_LEN, 9, 0, 36)) {
+    if (!removeParity(g_DemodBuffer, idx + EM_PREAMBLE_LEN, 9, 0, 36)) {
         PrintAndLogEx(DEBUG, "DEBUG: Error - EM, failed removing parity");
         return PM3_ESOFT;
     }
-    setDemodBuff(DemodBuffer, 32, 0);
-    *word = bytebits_to_byteLSBF(DemodBuffer, 32);
+    setDemodBuff(g_DemodBuffer, 32, 0);
+    *word = bytebits_to_byteLSBF(g_DemodBuffer, 32);
     return PM3_SUCCESS;
 }
 
@@ -299,7 +299,7 @@ static int em4x05_demod_resp(uint32_t *word, bool onlyPreamble) {
             if (res == PM3_EFAILED)
                 found_err = true;
 
-            psk1TOpsk2(DemodBuffer, DemodBufferLen);
+            psk1TOpsk2(g_DemodBuffer, g_DemodBufferLen);
             res = doPreambleSearch(&idx);
             if (res == PM3_SUCCESS)
                 break;
@@ -348,13 +348,13 @@ int em4x05_clone_tag(uint32_t *blockdata, uint8_t numblocks, uint32_t pwd, bool 
         return PM3_EINVARG;
 
     // fast push mode
-    conn.block_after_ACK = true;
+    g_conn.block_after_ACK = true;
     int res = 0;
     for (int8_t i = 0; i < numblocks; i++) {
 
         // Disable fast mode on last packet
         if (i == numblocks - 1) {
-            conn.block_after_ACK = false;
+            g_conn.block_after_ACK = false;
         }
 
         if (i != 0) {
@@ -1390,7 +1390,7 @@ int CmdEM4x05Chk(const char *Cmd) {
 
         for (uint32_t c = 0; c < keycount; ++c) {
 
-            if (!session.pm3_present) {
+            if (!g_session.pm3_present) {
                 PrintAndLogEx(WARNING, "device offline\n");
                 free(keyBlock);
                 return PM3_ENODATA;
@@ -1569,7 +1569,7 @@ int CmdEM4x05Unlock(const char *Cmd) {
         return PM3_EINVARG;
     }
 
-    if (session.pm3_present == false) {
+    if (g_session.pm3_present == false) {
         PrintAndLogEx(WARNING, "device offline\n");
         return PM3_ENODATA;
     }
@@ -2021,18 +2021,18 @@ int CmdEM4x05Sniff(const char *Cmd) {
 
     idx = 0;
     // loop though sample buffer
-    while (idx < GraphTraceLen) {
+    while (idx < g_GraphTraceLen) {
         eop = false;
         haveData = false;
         pwd = false;
 
-        idx = em4x05_Sniff_GetNextBitStart(idx, GraphTraceLen, GraphBuffer, &pulseSamples);
+        idx = em4x05_Sniff_GetNextBitStart(idx, g_GraphTraceLen, g_GraphBuffer, &pulseSamples);
         pktOffset = idx;
         if (pulseSamples >= 10)  { // Should be 18 so a bit less to allow for processing
 
             // Use first bit to get "0" bit samples as a reference
             ZeroWidth = idx;
-            idx = em4x05_Sniff_GetNextBitStart(idx, GraphTraceLen, GraphBuffer, &pulseSamples);
+            idx = em4x05_Sniff_GetNextBitStart(idx, g_GraphTraceLen, g_GraphBuffer, &pulseSamples);
             ZeroWidth = idx - ZeroWidth;
 
             if (ZeroWidth <= 50) {
@@ -2040,9 +2040,9 @@ int CmdEM4x05Sniff(const char *Cmd) {
                 memset(bits, 0x00, sizeof(bits));
                 bitidx = 0;
 
-                while ((idx < GraphTraceLen) && !eop) {
+                while ((idx < g_GraphTraceLen) && !eop) {
                     CycleWidth = idx;
-                    idx = em4x05_Sniff_GetNextBitStart(idx, GraphTraceLen, GraphBuffer, &pulseSamples);
+                    idx = em4x05_Sniff_GetNextBitStart(idx, g_GraphTraceLen, g_GraphBuffer, &pulseSamples);
 
                     CycleWidth = idx - CycleWidth;
                     if ((CycleWidth > 300) || (CycleWidth < (ZeroWidth - 5))) { // to long or too short

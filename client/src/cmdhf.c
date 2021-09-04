@@ -208,7 +208,7 @@ int CmdHFTune(const char *Cmd) {
         return PM3_EINVARG;
     }
 
-    barMode_t style = session.bar_mode;
+    barMode_t style = g_session.bar_mode;
     if (is_bar)
         style = STYLE_BAR;
     if (is_mix)
@@ -340,7 +340,7 @@ int CmdHFSniff(const char *Cmd) {
                 // it reserve memory from the higher end.
                 // At the moment, sniff takes all free memory in bigbuff. If this changes,
                 // we can't start from beginning idx 0 but from that hi-to-start-of-allocated.
-                uint32_t start = pm3_capabilities.bigbuf_size - retval->len;
+                uint32_t start = g_pm3_capabilities.bigbuf_size - retval->len;
                 int res = getSamplesEx(start, start, false);
                 if (res != PM3_SUCCESS) {
                     PrintAndLogEx(WARNING, "failed to download samples to client");
@@ -365,10 +365,10 @@ int handle_hf_plot(void) {
     }
 
     for (size_t i = 0; i < FPGA_TRACE_SIZE; i++) {
-        GraphBuffer[i] = ((int)buf[i]) - 128;
+        g_GraphBuffer[i] = ((int)buf[i]) - 128;
     }
 
-    GraphTraceLen = FPGA_TRACE_SIZE;
+    g_GraphTraceLen = FPGA_TRACE_SIZE;
 
     ShowGraphWindow();
 
@@ -376,7 +376,7 @@ int handle_hf_plot(void) {
     CmdHpf("");
 
     setClockGrid(0, 0);
-    DemodBufferLen = 0;
+    g_DemodBufferLen = 0;
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }

@@ -39,7 +39,7 @@
 #define PACKED __attribute__((packed))
 
 #define VERSION_INFORMATION_MAGIC 0x56334d50 // "PM3V"
-struct version_information {
+struct version_information_t {
     int magic; /* Magic sequence to identify this as a correct version information structure. Must be VERSION_INFORMATION_MAGIC */
     char versionversion; /* Must be 1 */
     char present; /* 1 if the version information could be created at compile time, otherwise 0 and the remaining fields (except for magic) are empty */
@@ -54,11 +54,11 @@ struct version_information {
 #define DBG_INFO          2 // errors + info messages
 #define DBG_DEBUG         3 // errors + info + debug messages
 #define DBG_EXTENDED      4 // errors + info + debug + breaking debug messages
-extern int DBGLEVEL;
+extern int g_dbglevel;
 
 // tear-off
-extern uint16_t tearoff_delay_us;
-extern bool tearoff_enabled;
+extern uint16_t g_tearoff_delay_us;
+extern bool g_tearoff_enabled;
 
 // reader voltage field detector
 #define MF_MINFIELDV      4000

@@ -199,7 +199,7 @@ typedef struct {
     bool hw_available_smartcard        : 1;
 } PACKED capabilities_t;
 #define CAPABILITIES_VERSION 5
-extern capabilities_t pm3_capabilities;
+extern capabilities_t g_pm3_capabilities;
 
 // For CMD_LF_T55XX_WRITEBL
 typedef struct {
@@ -886,10 +886,10 @@ typedef struct {
 
 
 // CMD_DEVICE_INFO response packet has flags in arg[0], flag definitions:
-/* Whether a bootloader that understands the common_area is present */
+/* Whether a bootloader that understands the g_common_area is present */
 #define DEVICE_INFO_FLAG_BOOTROM_PRESENT             (1<<0)
 
-/* Whether a osimage that understands the common_area is present */
+/* Whether a osimage that understands the g_common_area is present */
 #define DEVICE_INFO_FLAG_OSIMAGE_PRESENT             (1<<1)
 
 /* Set if the bootloader is currently executing */

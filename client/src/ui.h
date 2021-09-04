@@ -50,11 +50,10 @@ typedef struct {
 //    uint8_t device_debug_level;
     uint16_t client_exe_delay;
     char *history_path;
-    pm3_device *current_device;
+    pm3_device_t *current_device;
 } session_arg_t;
 
-extern session_arg_t session;
-extern bool showDemod;
+extern session_arg_t g_session;
 #ifndef M_PI
 #define M_PI 3.14159265358979323846264338327
 #endif
@@ -70,7 +69,7 @@ void memcpy_filter_emoji(void *dest, const void *src, size_t n, emojiMode_t mode
 
 int searchHomeFilePath(char **foundpath, const char *subdir, const char *filename, bool create_home);
 
-extern pthread_mutex_t print_lock;
+extern pthread_mutex_t g_print_lock;
 
 void print_progress(size_t count, uint64_t max, barMode_t style);
 

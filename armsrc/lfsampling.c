@@ -42,7 +42,7 @@ static sample_config def_config = {
 static sample_config config = { 1, 8, 1, LF_DIVISOR_125, 0, 0, true} ;
 
 // Holds bit packed struct of samples.
-static BitstreamOut data = {0, 0, 0};
+static BitstreamOut_t data = {0, 0, 0};
 
 // internal struct to keep track of samples gathered
 static sampling_t samples = {0, 0, 0, 0};
@@ -123,7 +123,7 @@ sample_config *getSamplingConfig(void) {
  * @param stream
  * @param bit
  */
-static void pushBit(BitstreamOut *stream, uint8_t bit) {
+static void pushBit(BitstreamOut_t *stream, uint8_t bit) {
     int bytepos = stream->position >> 3; // divide by 8
     int bitpos = stream->position & 7;
     *(stream->buffer + bytepos) &= ~(1 << (7 - bitpos));
@@ -284,7 +284,7 @@ uint32_t DoAcquisition(uint8_t decimation, uint8_t bits_per_sample, bool avg, in
 
     initSampleBuffer(&sample_size);
 
-    if (DBGLEVEL >= DBG_DEBUG) {
+    if (g_dbglevel >= DBG_DEBUG) {
         printSamples();
     }
 
@@ -443,7 +443,7 @@ void doT55x7Acquisition(size_t sample_size) {
 
     uint16_t checker = 0;
 
-    if (DBGLEVEL >= DBG_DEBUG) {
+    if (g_dbglevel >= DBG_DEBUG) {
         Dbprintf("doT55x7Acquisition - after init");
         print_stack_usage();
     }

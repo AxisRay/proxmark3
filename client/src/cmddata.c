@@ -29,14 +29,14 @@
 #include "cmdlft55xx.h"          // print...
 #include "crypto/asn1utils.h"    // ASN1 decode / print
 
-uint8_t DemodBuffer[MAX_DEMOD_BUF_LEN];
-size_t DemodBufferLen = 0;
+uint8_t g_DemodBuffer[MAX_DEMOD_BUF_LEN];
+size_t g_DemodBufferLen = 0;
 int32_t g_DemodStartIdx = 0;
 int g_DemodClock = 0;
 
 static int CmdHelp(const char *Cmd);
 
-//set the demod buffer with given array ofq binary (one bit per byte)
+//set the g_DemodBuffer with given array ofq binary (one bit per byte)
 //by marshmellow
 void setDemodBuff(uint8_t *buff, size_t size, size_t start_idx) {
     if (buff == NULL) return;
@@ -45,9 +45,9 @@ void setDemodBuff(uint8_t *buff, size_t size, size_t start_idx) {
         size = MAX_DEMOD_BUF_LEN - start_idx;
 
     for (size_t i = 0; i < size; i++)
-        DemodBuffer[i] = buff[start_idx++];
+        g_DemodBuffer[i] = buff[start_idx++];
 
-    DemodBufferLen = size;
+    g_DemodBufferLen = size;
 }
 
 bool getDemodBuff(uint8_t *buff, size_t *size) {
@@ -55,9 +55,9 @@ bool getDemodBuff(uint8_t *buff, size_t *size) {
     if (size == NULL) return false;
     if (*size == 0) return false;
 
-    *size = (*size > DemodBufferLen) ? DemodBufferLen : *size;
+    *size = (*size > g_DemodBufferLen) ? g_DemodBufferLen : *size;
 
-    memcpy(buff, DemodBuffer, *size);
+    memcpy(buff, g_DemodBuffer, *size);
     return true;
 }
 
@@ -139,7 +139,7 @@ static double compute_autoc(const int *data, size_t n, int lag) {
 }
 */
 
-// option '1' to save DemodBuffer any other to restore
+// option '1' to save g_DemodBuffer any other to restore
 void save_restoreDB(uint8_t saveOpt) {
     static uint8_t SavedDB[MAX_DEMOD_BUF_LEN];
     static size_t SavedDBlen;
@@ -149,15 +149,15 @@ void save_restoreDB(uint8_t saveOpt) {
 
     if (saveOpt == GRAPH_SAVE) { //save
 
-        memcpy(SavedDB, DemodBuffer, sizeof(DemodBuffer));
-        SavedDBlen = DemodBufferLen;
+        memcpy(SavedDB, g_DemodBuffer, sizeof(g_DemodBuffer));
+        SavedDBlen = g_DemodBufferLen;
         DB_Saved = true;
         savedDemodStartIdx = g_DemodStartIdx;
         savedDemodClock = g_DemodClock;
     } else if (DB_Saved) { //restore
 
-        memcpy(DemodBuffer, SavedDB, sizeof(DemodBuffer));
-        DemodBufferLen = SavedDBlen;
+        memcpy(g_DemodBuffer, SavedDB, sizeof(g_DemodBuffer));
+        g_DemodBufferLen = SavedDBlen;
         g_DemodClock = savedDemodClock;
         g_DemodStartIdx = savedDemodStartIdx;
     }
@@ -215,9 +215,9 @@ static int CmdSetDebugMode(const char *Cmd) {
 // max output to 512 bits if we have more
 // doesn't take inconsideration where the demod offset or bitlen found.
 int printDemodBuff(uint8_t offset, bool strip_leading, bool invert, bool print_hex) {
-    size_t len = DemodBufferLen;
+    size_t len = g_DemodBufferLen;
     if (len == 0) {
-        PrintAndLogEx(WARNING, "Demodbuffer is empty");
+        PrintAndLogEx(WARNING, "DemodBuffer is empty");
         return PM3_EINVARG;
     }
 
@@ -226,15 +226,15 @@ int printDemodBuff(uint8_t offset, bool strip_leading, bool invert, bool print_h
         PrintAndLogEx(WARNING, "dail, cannot allocate memory");
         return PM3_EMALLOC;
     }
-    memcpy(buf, DemodBuffer, len);
+    memcpy(buf, g_DemodBuffer, len);
 
     uint8_t *p = NULL;
 
     if (strip_leading) {
         p = (buf + offset);
 
-        if (len > (DemodBufferLen - offset))
-            len = (DemodBufferLen - offset);
+        if (len > (g_DemodBufferLen - offset))
+            len = (g_DemodBufferLen - offset);
 
         size_t i;
         for (i = 0; i < len; i++) {
@@ -243,8 +243,8 @@ int printDemodBuff(uint8_t offset, bool strip_leading, bool invert, bool print_h
         offset += i;
     }
 
-    if (len > (DemodBufferLen - offset)) {
-        len = (DemodBufferLen - offset);
+    if (len > (g_DemodBufferLen - offset)) {
+        len = (g_DemodBufferLen - offset);
     }
 
     if (len > 512)  {
@@ -291,7 +291,7 @@ int CmdPrintDemodBuff(const char *Cmd) {
                  );
     void *argtable[] = {
         arg_param_begin,
-        arg_lit0("i", "inv", "invert Demodbuffer before printing"),
+        arg_lit0("i", "inv", "invert DemodBuffer before printing"),
 //        arg_int0("l","len", "<dec>", "length to print in # of bits or hex characters respectively"),
         arg_int0("o", "offset", "<dec>", "offset in # of bits"),
         arg_lit0("s", "strip", "strip leading zeroes, i.e. set offset to first bit equal to one"),
@@ -328,8 +328,8 @@ int CmdGetBitStream(const char *Cmd) {
     CLIParserFree(ctx);
 
     CmdHpf("");
-    for (uint32_t i = 0; i < GraphTraceLen; i++) {
-        GraphBuffer[i] = (GraphBuffer[i] >= 1) ? 1 : 0;
+    for (uint32_t i = 0; i < g_GraphTraceLen; i++) {
+        g_GraphBuffer[i] = (g_GraphBuffer[i] >= 1) ? 1 : 0;
     }
     RepaintGraphWindow();
     return PM3_SUCCESS;
@@ -377,7 +377,7 @@ int ASKDemod_ext(int clk, int invert, int maxErr, size_t maxlen, bool amplify, b
     uint8_t askamp = 0;
 
     if (maxlen == 0)
-        maxlen = pm3_capabilities.bigbuf_size;
+        maxlen = g_pm3_capabilities.bigbuf_size;
 
     uint8_t *bits = calloc(MAX_GRAPH_TRACE_LEN, sizeof(uint8_t));
     if (bits == NULL) {
@@ -416,8 +416,8 @@ int ASKDemod_ext(int clk, int invert, int maxErr, size_t maxlen, bool amplify, b
 
     if (st) {
         *stCheck = st;
-        CursorCPos = ststart;
-        CursorDPos = stend;
+        g_CursorCPos = ststart;
+        g_CursorDPos = stend;
         if (verbose)
             PrintAndLogEx(DEBUG, "Found Sequence Terminator - First one is shown by orange / blue graph markers");
     }
@@ -535,7 +535,7 @@ static int Cmdmandecoderaw(const char *Cmd) {
     CLIParserInit(&ctx, "data manrawdecode",
                   "Manchester decode binary stream in DemodBuffer\n"
                   "Converts 10 and 01 and converts to 0 and 1 respectively\n"
-                  " - must have binary sequence in demodbuffer (run `data rawdemod --ar` before)",
+                  " - must have binary sequence in DemodBuffer (run `data rawdemod --ar` before)",
                   "data manrawdecode"
                  );
     void *argtable[] = {
@@ -549,7 +549,7 @@ static int Cmdmandecoderaw(const char *Cmd) {
     int max_err = arg_get_int_def(ctx, 2, 20);
     CLIParserFree(ctx);
 
-    if (DemodBufferLen == 0) {
+    if (g_DemodBufferLen == 0) {
         PrintAndLogEx(WARNING, "DemodBuffer empty, run " _YELLOW_("`data rawdemod --ar`"));
         return PM3_ESOFT;
     }
@@ -559,12 +559,12 @@ static int Cmdmandecoderaw(const char *Cmd) {
     // make sure its just binary data 0|1|7 in buffer
     int high = 0, low = 0;
     size_t i = 0;
-    for (; i < DemodBufferLen; ++i) {
-        if (DemodBuffer[i] > high)
-            high = DemodBuffer[i];
-        else if (DemodBuffer[i] < low)
-            low = DemodBuffer[i];
-        bits[i] = DemodBuffer[i];
+    for (; i < g_DemodBufferLen; ++i) {
+        if (g_DemodBuffer[i] > high)
+            high = g_DemodBuffer[i];
+        else if (g_DemodBuffer[i] < low)
+            low = g_DemodBuffer[i];
+        bits[i] = g_DemodBuffer[i];
     }
 
     if (high > 7 || low < 0) {
@@ -618,10 +618,10 @@ static int CmdBiphaseDecodeRaw(const char *Cmd) {
     CLIParserInit(&ctx, "data biphaserawdecode",
                   "Biphase decode binary stream in DemodBuffer\n"
                   "Converts 10 or 01 -> 1 and 11 or 00 -> 0\n"
-                  " - must have binary sequence in demodbuffer (run `data rawdemod --ar` before)\n"
+                  " - must have binary sequence in DemodBuffer (run `data rawdemod --ar` before)\n"
                   " - invert for Conditional Dephase Encoding (CDP) AKA Differential Manchester",
-                  "data biphaserawdecode      --> decode biphase bitstream from the demodbuffer\n"
-                  "data biphaserawdecode -oi  --> decode biphase bitstream from the demodbuffer, adjust offset, and invert output"
+                  "data biphaserawdecode      --> decode biphase bitstream from the DemodBuffer\n"
+                  "data biphaserawdecode -oi  --> decode biphase bitstream from the DemodBuffer, adjust offset, and invert output"
                  );
     void *argtable[] = {
         arg_param_begin,
@@ -636,7 +636,7 @@ static int CmdBiphaseDecodeRaw(const char *Cmd) {
     int max_err = arg_get_int_def(ctx, 3, 20);
     CLIParserFree(ctx);
 
-    if (DemodBufferLen == 0) {
+    if (g_DemodBufferLen == 0) {
         PrintAndLogEx(WARNING, "DemodBuffer empty, run " _YELLOW_("`data rawdemod --ar`"));
         return PM3_ESOFT;
     }
@@ -667,9 +667,9 @@ static int CmdBiphaseDecodeRaw(const char *Cmd) {
     return PM3_SUCCESS;
 }
 
-// ASK Demod then Biphase decode GraphBuffer samples
+// ASK Demod then Biphase decode g_GraphBuffer samples
 int ASKbiphaseDemod(int offset, int clk, int invert, int maxErr, bool verbose) {
-    //ask raw demod GraphBuffer first
+    //ask raw demod g_GraphBuffer first
 
     uint8_t bs[MAX_DEMOD_BUF_LEN];
     size_t size = getFromGraphBuf(bs);
@@ -699,7 +699,7 @@ int ASKbiphaseDemod(int offset, int clk, int invert, int maxErr, bool verbose) {
     if (offset >= 1) {
         offset -= 1;
     }
-    //success set DemodBuffer and return
+    //success set g_DemodBuffer and return
     setDemodBuff(bs, size, 0);
     setClockGrid(clk, startIdx + clk * offset / 2);
     if (g_debugMode || verbose) {
@@ -778,7 +778,7 @@ int AutoCorrelate(const int *in, int *out, size_t len, size_t window, bool SaveG
     // sanity check
     if (window > len) window = len;
 
-    if (verbose) PrintAndLogEx(INFO, "performing " _YELLOW_("%zu") " correlations", GraphTraceLen - window);
+    if (verbose) PrintAndLogEx(INFO, "performing " _YELLOW_("%zu") " correlations", g_GraphTraceLen - window);
 
     //test
     double autocv = 0.0;    // Autocovariance value
@@ -843,7 +843,7 @@ int AutoCorrelate(const int *in, int *out, size_t len, size_t window, bool SaveG
 
     int retval = correlation;
     if (SaveGrph) {
-        //GraphTraceLen = GraphTraceLen - window;
+        //g_GraphTraceLen = g_GraphTraceLen - window;
         memcpy(out, correl_buf, len * sizeof(int));
         if (distance > 0) {
             setClockGrid(distance, idx);
@@ -851,9 +851,9 @@ int AutoCorrelate(const int *in, int *out, size_t len, size_t window, bool SaveG
         } else
             setClockGrid(correlation, idx);
 
-        CursorCPos = idx_1;
-        CursorDPos = idx_1 + retval;
-        DemodBufferLen = 0;
+        g_CursorCPos = idx_1;
+        g_CursorDPos = idx_1 + retval;
+        g_DemodBufferLen = 0;
         RepaintGraphWindow();
     }
     free(correl_buf);
@@ -881,18 +881,18 @@ static int CmdAutoCorr(const char *Cmd) {
 
     PrintAndLogEx(INFO, "Using window size " _YELLOW_("%u"), window);
 
-    if (GraphTraceLen == 0) {
+    if (g_GraphTraceLen == 0) {
         PrintAndLogEx(WARNING, "GraphBuffer is empty");
         PrintAndLogEx(HINT, "Try `" _YELLOW_("lf read") "` to collect samples");
         return PM3_ESOFT;
     }
 
-    if (window >= GraphTraceLen) {
-        PrintAndLogEx(WARNING, "window must be smaller than trace (" _YELLOW_("%zu") " samples)", GraphTraceLen);
+    if (window >= g_GraphTraceLen) {
+        PrintAndLogEx(WARNING, "window must be smaller than trace (" _YELLOW_("%zu") " samples)", g_GraphTraceLen);
         return PM3_EINVARG;
     }
 
-    AutoCorrelate(GraphBuffer, GraphBuffer, GraphTraceLen, window, updateGrph, true);
+    AutoCorrelate(g_GraphBuffer, g_GraphBuffer, g_GraphTraceLen, window, updateGrph, true);
     return PM3_SUCCESS;
 }
 
@@ -921,12 +921,12 @@ static int CmdBitsamples(const char *Cmd) {
     for (size_t j = 0; j < ARRAYLEN(got); j++) {
         for (uint8_t k = 0; k < 8; k++) {
             if (got[j] & (1 << (7 - k)))
-                GraphBuffer[cnt++] = 1;
+                g_GraphBuffer[cnt++] = 1;
             else
-                GraphBuffer[cnt++] = 0;
+                g_GraphBuffer[cnt++] = 0;
         }
     }
-    GraphTraceLen = cnt;
+    g_GraphTraceLen = cnt;
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }
@@ -968,10 +968,10 @@ static int CmdDecimate(const char *Cmd) {
     int n = arg_get_int_def(ctx, 1, 2);
     CLIParserFree(ctx);
 
-    for (size_t i = 0; i < (GraphTraceLen / n); ++i)
-        GraphBuffer[i] = GraphBuffer[i * n];
+    for (size_t i = 0; i < (g_GraphTraceLen / n); ++i)
+        g_GraphBuffer[i] = g_GraphBuffer[i * n];
 
-    GraphTraceLen /= n;
+    g_GraphTraceLen /= n;
     PrintAndLogEx(SUCCESS, "decimated by " _GREEN_("%u"), n);
     RepaintGraphWindow();
     return PM3_SUCCESS;
@@ -1003,20 +1003,20 @@ static int CmdUndecimate(const char *Cmd) {
     //We have memory, don't we?
     int swap[MAX_GRAPH_TRACE_LEN] = {0};
     uint32_t g_index = 0, s_index = 0;
-    while (g_index < GraphTraceLen && s_index + factor < MAX_GRAPH_TRACE_LEN) {
+    while (g_index < g_GraphTraceLen && s_index + factor < MAX_GRAPH_TRACE_LEN) {
         int count = 0;
         for (count = 0; count < factor && s_index + count < MAX_GRAPH_TRACE_LEN; count++) {
             swap[s_index + count] = (
-                                        (double)(factor - count) / (factor - 1)) * GraphBuffer[g_index] +
-                                    ((double)count / factor) * GraphBuffer[g_index + 1]
+                                        (double)(factor - count) / (factor - 1)) * g_GraphBuffer[g_index] +
+                                    ((double)count / factor) * g_GraphBuffer[g_index + 1]
                                     ;
         }
         s_index += count;
         g_index++;
     }
 
-    memcpy(GraphBuffer, swap, s_index * sizeof(int));
-    GraphTraceLen = s_index;
+    memcpy(g_GraphBuffer, swap, s_index * sizeof(int));
+    g_GraphTraceLen = s_index;
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }
@@ -1039,14 +1039,14 @@ static int CmdGraphShiftZero(const char *Cmd) {
     int shift = arg_get_int_def(ctx, 1, 0);
     CLIParserFree(ctx);
 
-    for (size_t i = 0; i < GraphTraceLen; i++) {
-        int shiftedVal = GraphBuffer[i] + shift;
+    for (size_t i = 0; i < g_GraphTraceLen; i++) {
+        int shiftedVal = g_GraphBuffer[i] + shift;
 
         if (shiftedVal > 127)
             shiftedVal = 127;
         else if (shiftedVal < -127)
             shiftedVal = -127;
-        GraphBuffer[i] = shiftedVal;
+        g_GraphBuffer[i] = shiftedVal;
     }
     CmdNorm("");
     return PM3_SUCCESS;
@@ -1085,7 +1085,7 @@ static int CmdAskEdgeDetect(const char *Cmd) {
     CLIParserFree(ctx);
 
     PrintAndLogEx(INFO, "using threshold " _YELLOW_("%i"), threshold);
-    int res = AskEdgeDetect(GraphBuffer, GraphBuffer, GraphTraceLen, threshold);
+    int res = AskEdgeDetect(g_GraphBuffer, g_GraphBuffer, g_GraphTraceLen, threshold);
     RepaintGraphWindow();
     return res;
 }
@@ -1308,7 +1308,7 @@ int PSKDemod(int clk, int invert, int maxErr, bool verbose) {
             PrintAndLogEx(DEBUG, "DEBUG: (PSKdemod) errors during Demoding (shown as 7 in bit stream): %d", errCnt);
         }
     }
-    //prime demod buffer for output
+    //prime g_DemodBuffer for output
     setDemodBuff(bits, bitlen, 0);
     setClockGrid(clk, startIdx);
     free(bits);
@@ -1317,7 +1317,7 @@ int PSKDemod(int clk, int invert, int maxErr, bool verbose) {
 
 // takes 3 arguments - clock, invert, maxErr as integers
 // attempts to demodulate nrz only
-// prints binary found and saves in demodbuffer for further commands
+// prints binary found and saves in g_DemodBuffer for further commands
 int NRZrawDemod(int clk, int invert, int maxErr, bool verbose) {
 
     int errCnt = 0, clkStartIdx = 0;
@@ -1355,7 +1355,7 @@ int NRZrawDemod(int clk, int invert, int maxErr, bool verbose) {
     }
 
     if (verbose || g_debugMode) PrintAndLogEx(DEBUG, "DEBUG: (NRZrawDemod) Tried NRZ Demod using Clock: %d - invert: %d - Bits Found: %zu", clk, invert, bitlen);
-    //prime demod buffer for output
+    //prime g_DemodBuffer for output
     setDemodBuff(bits, bitlen, 0);
     setClockGrid(clk, clkStartIdx);
 
@@ -1400,7 +1400,7 @@ static int CmdNRZrawDemod(const char *Cmd) {
 
 // takes 3 arguments - clock, invert, max_err as integers
 // attempts to demodulate psk only
-// prints binary found and saves in demodbuffer for further commands
+// prints binary found and saves in g_DemodBuffer for further commands
 int CmdPSK1rawDemod(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "data rawdemod --p1",
@@ -1468,7 +1468,7 @@ static int CmdPSK2rawDemod(const char *Cmd) {
         if (g_debugMode) PrintAndLogEx(ERR, "Error demoding: %d", ans);
         return PM3_ESOFT;
     }
-    psk1TOpsk2(DemodBuffer, DemodBufferLen);
+    psk1TOpsk2(g_DemodBuffer, g_DemodBufferLen);
     PrintAndLogEx(SUCCESS, _YELLOW_("PSK2") " demoded bitstream");
     PrintAndLogEx(INFO, "----------------------");
     // Now output the bitstream to the scrollback by line of 16 bits
@@ -1560,18 +1560,18 @@ void setClockGrid(uint32_t clk, int offset) {
     if (offset > clk) offset %= clk;
     if (offset < 0) offset += clk;
 
-    if (offset > GraphTraceLen || offset < 0) return;
-    if (clk < 8 || clk > GraphTraceLen) {
-        GridLocked = false;
-        GridOffset = 0;
-        PlotGridX = 0;
-        PlotGridXdefault = 0;
+    if (offset > g_GraphTraceLen || offset < 0) return;
+    if (clk < 8 || clk > g_GraphTraceLen) {
+        g_GridLocked = false;
+        g_GridOffset = 0;
+        g_PlotGridX = 0;
+        g_PlotGridXdefault = 0;
         RepaintGraphWindow();
     } else {
-        GridLocked = true;
-        GridOffset = offset;
-        PlotGridX = clk;
-        PlotGridXdefault = clk;
+        g_GridLocked = true;
+        g_GridOffset = offset;
+        g_PlotGridX = clk;
+        g_PlotGridXdefault = clk;
         RepaintGraphWindow();
     }
 }
@@ -1591,12 +1591,12 @@ int CmdGrid(const char *Cmd) {
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, true);
-    PlotGridX = arg_get_dbl_def(ctx, 1, 0);
-    PlotGridY = arg_get_dbl_def(ctx, 2, 0);
+    g_PlotGridX = arg_get_dbl_def(ctx, 1, 0);
+    g_PlotGridY = arg_get_dbl_def(ctx, 2, 0);
     CLIParserFree(ctx);
-    PrintAndLogEx(INFO, "Setting X %.0f  Y %.0f", PlotGridX, PlotGridY);
-    PlotGridXdefault = PlotGridX;
-    PlotGridYdefault = PlotGridY;
+    PrintAndLogEx(INFO, "Setting X %.0f  Y %.0f", g_PlotGridX, g_PlotGridY);
+    g_PlotGridXdefault = g_PlotGridX;
+    g_PlotGridYdefault = g_PlotGridY;
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }
@@ -1615,10 +1615,10 @@ static int CmdSetGraphMarkers(const char *Cmd) {
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, true);
-    CursorCPos = arg_get_u32_def(ctx, 1, 0);
-    CursorDPos = arg_get_u32_def(ctx, 2, 0);
+    g_CursorCPos = arg_get_u32_def(ctx, 1, 0);
+    g_CursorDPos = arg_get_u32_def(ctx, 2, 0);
     CLIParserFree(ctx);
-    PrintAndLogEx(INFO, "Setting orange %u blue %u", CursorCPos, CursorDPos);
+    PrintAndLogEx(INFO, "Setting orange %u blue %u", g_CursorCPos, g_CursorDPos);
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }
@@ -1644,17 +1644,17 @@ static int CmdHexsamples(const char *Cmd) {
     CLIParserFree(ctx);
 
     // sanity checks
-    if (requested > pm3_capabilities.bigbuf_size) {
-        requested = pm3_capabilities.bigbuf_size;
+    if (requested > g_pm3_capabilities.bigbuf_size) {
+        requested = g_pm3_capabilities.bigbuf_size;
         PrintAndLogEx(INFO, "n is larger than big buffer size, will use %u", requested);
     }
 
-    uint8_t got[pm3_capabilities.bigbuf_size];
+    uint8_t got[g_pm3_capabilities.bigbuf_size];
     if (offset + requested > sizeof(got)) {
         PrintAndLogEx(NORMAL, "Tried to read past end of buffer, <bytes %u> + <offset %u> > %d"
                       , requested
                       , offset
-                      , pm3_capabilities.bigbuf_size
+                      , g_pm3_capabilities.bigbuf_size
                      );
         return PM3_EINVARG;
     }
@@ -1684,7 +1684,7 @@ static int CmdHide(const char *Cmd) {
     return PM3_SUCCESS;
 }
 
-// zero mean GraphBuffer
+// zero mean g_GraphBuffer
 int CmdHpf(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "data hpf",
@@ -1698,7 +1698,7 @@ int CmdHpf(const char *Cmd) {
     CLIExecWithReturn(ctx, Cmd, argtable, true);
     CLIParserFree(ctx);
 
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
     removeSignalOffset(bits, size);
     // push it back to graph
@@ -1710,13 +1710,13 @@ int CmdHpf(const char *Cmd) {
     return PM3_SUCCESS;
 }
 
-static bool _headBit(BitstreamOut *stream) {
+static bool _headBit(BitstreamOut_t *stream) {
     int bytepos = stream->position >> 3; // divide by 8
     int bitpos = (stream->position++) & 7; // mask out 00000111
     return (*(stream->buffer + bytepos) >> (7 - bitpos)) & 1;
 }
 
-static uint8_t getByte(uint8_t bits_per_sample, BitstreamOut *b) {
+static uint8_t getByte(uint8_t bits_per_sample, BitstreamOut_t *b) {
     uint8_t val = 0;
     for (int i = 0 ; i < bits_per_sample; i++)
         val |= (_headBit(b) << (7 - i));
@@ -1739,13 +1739,13 @@ int getSamplesEx(uint32_t start, uint32_t end, bool verbose) {
     // we don't have to worry about remaining trash
     // in the last byte in case the bits-per-sample
     // does not line up on byte boundaries
-    uint8_t got[pm3_capabilities.bigbuf_size - 1];
+    uint8_t got[g_pm3_capabilities.bigbuf_size - 1];
     memset(got, 0x00, sizeof(got));
 
     uint32_t n = end - start;
 
-    if (n == 0 || n > pm3_capabilities.bigbuf_size - 1)
-        n = pm3_capabilities.bigbuf_size - 1;
+    if (n == 0 || n > g_pm3_capabilities.bigbuf_size - 1)
+        n = g_pm3_capabilities.bigbuf_size - 1;
 
     if (verbose)
         PrintAndLogEx(INFO, "Reading " _YELLOW_("%u") " bytes from device memory", n);
@@ -1771,30 +1771,30 @@ int getSamplesEx(uint32_t start, uint32_t end, bool verbose) {
 
         if (verbose) PrintAndLogEx(INFO, "Unpacking...");
 
-        BitstreamOut bout = { got, bits_per_sample * n,  0};
+        BitstreamOut_t bout = { got, bits_per_sample * n,  0};
         uint32_t j = 0;
         for (j = 0; j * bits_per_sample < n * 8 && j < n; j++) {
             uint8_t sample = getByte(bits_per_sample, &bout);
-            GraphBuffer[j] = ((int) sample) - 127;
+            g_GraphBuffer[j] = ((int) sample) - 127;
         }
-        GraphTraceLen = j;
+        g_GraphTraceLen = j;
 
         if (verbose) PrintAndLogEx(INFO, "Unpacked %d samples", j);
 
     } else {
         for (uint32_t j = 0; j < n; j++) {
-            GraphBuffer[j] = ((int)got[j]) - 127;
+            g_GraphBuffer[j] = ((int)got[j]) - 127;
         }
-        GraphTraceLen = n;
+        g_GraphTraceLen = n;
     }
 
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
     // set signal properties low/high/mean/amplitude and is_noise detection
     computeSignalProperties(bits, size);
 
     setClockGrid(0, 0);
-    DemodBufferLen = 0;
+    g_DemodBufferLen = 0;
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }
@@ -1845,7 +1845,7 @@ int CmdTuneSamples(const char *Cmd) {
 #define ANTENNA_ERROR   1.00 // current algo has 3% error margin.
 
     // hide demod plot line
-    DemodBufferLen = 0;
+    g_DemodBufferLen = 0;
     setClockGrid(0, 0);
     RepaintGraphWindow();
 
@@ -1995,16 +1995,16 @@ int CmdTuneSamples(const char *Cmd) {
     // even here, these values has 3% error.
     uint16_t test1 = 0;
     for (int i = 0; i < 256; i++) {
-        GraphBuffer[i] = package->results[i] - 128;
+        g_GraphBuffer[i] = package->results[i] - 128;
         test1 += package->results[i];
     }
 
     if (test1 > 0) {
         PrintAndLogEx(SUCCESS, "\nDisplaying LF tuning graph. Divisor %d (blue) is %.2f kHz, %d (red) is %.2f kHz.\n\n",
                       LF_DIVISOR_134, LF_DIV2FREQ(LF_DIVISOR_134), LF_DIVISOR_125, LF_DIV2FREQ(LF_DIVISOR_125));
-        GraphTraceLen = 256;
-        CursorCPos = LF_DIVISOR_125;
-        CursorDPos = LF_DIVISOR_134;
+        g_GraphTraceLen = 256;
+        g_CursorCPos = LF_DIVISOR_125;
+        g_CursorDPos = LF_DIVISOR_134;
         ShowGraphWindow();
         RepaintGraphWindow();
     } else {
@@ -2050,20 +2050,20 @@ static int CmdLoad(const char *Cmd) {
     }
     free(path);
 
-    GraphTraceLen = 0;
+    g_GraphTraceLen = 0;
     char line[80];
     while (fgets(line, sizeof(line), f)) {
-        GraphBuffer[GraphTraceLen] = atoi(line);
-        GraphTraceLen++;
+        g_GraphBuffer[g_GraphTraceLen] = atoi(line);
+        g_GraphTraceLen++;
 
-        if (GraphTraceLen >= MAX_GRAPH_TRACE_LEN)
+        if (g_GraphTraceLen >= MAX_GRAPH_TRACE_LEN)
             break;
     }
     fclose(f);
 
-    PrintAndLogEx(SUCCESS, "loaded " _YELLOW_("%zu") " samples", GraphTraceLen);
+    PrintAndLogEx(SUCCESS, "loaded " _YELLOW_("%zu") " samples", g_GraphTraceLen);
 
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
 
     removeSignalOffset(bits, size);
@@ -2071,7 +2071,7 @@ static int CmdLoad(const char *Cmd) {
     computeSignalProperties(bits, size);
 
     setClockGrid(0, 0);
-    DemodBufferLen = 0;
+    g_DemodBufferLen = 0;
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }
@@ -2093,15 +2093,15 @@ int CmdLtrim(const char *Cmd) {
     CLIParserFree(ctx);
 
     // sanitycheck
-    if (GraphTraceLen <= ds) {
+    if (g_GraphTraceLen <= ds) {
         PrintAndLogEx(WARNING, "index out of bounds");
         return PM3_EINVARG;
     }
 
-    for (uint32_t i = ds; i < GraphTraceLen; ++i)
-        GraphBuffer[i - ds] = GraphBuffer[i];
+    for (uint32_t i = ds; i < g_GraphTraceLen; ++i)
+        g_GraphBuffer[i - ds] = g_GraphBuffer[i];
 
-    GraphTraceLen -= ds;
+    g_GraphTraceLen -= ds;
     g_DemodStartIdx -= ds;
     RepaintGraphWindow();
     return PM3_SUCCESS;
@@ -2125,12 +2125,12 @@ static int CmdRtrim(const char *Cmd) {
     CLIParserFree(ctx);
 
     // sanitycheck
-    if (GraphTraceLen <= ds) {
+    if (g_GraphTraceLen <= ds) {
         PrintAndLogEx(WARNING, "index out of bounds");
         return PM3_EINVARG;
     }
 
-    GraphTraceLen = ds;
+    g_GraphTraceLen = ds;
     RepaintGraphWindow();
     return PM3_SUCCESS;
 }
@@ -2154,7 +2154,7 @@ static int CmdMtrim(const char *Cmd) {
     uint32_t stop = arg_get_u32(ctx, 2);
     CLIParserFree(ctx);
 
-    if (start > GraphTraceLen || stop > GraphTraceLen || start >= stop) {
+    if (start > g_GraphTraceLen || stop > g_GraphTraceLen || start >= stop) {
         PrintAndLogEx(WARNING, "start and end points doesn't align");
         return PM3_EINVARG;
     }
@@ -2162,9 +2162,9 @@ static int CmdMtrim(const char *Cmd) {
     // leave start position sample
     start++;
 
-    GraphTraceLen = stop - start;
-    for (uint32_t i = 0; i < GraphTraceLen; i++) {
-        GraphBuffer[i] = GraphBuffer[start + i];
+    g_GraphTraceLen = stop - start;
+    for (uint32_t i = 0; i < g_GraphTraceLen; i++) {
+        g_GraphBuffer[i] = g_GraphBuffer[start + i];
     }
 
     return PM3_SUCCESS;
@@ -2187,19 +2187,19 @@ int CmdNorm(const char *Cmd) {
     int max = INT_MIN, min = INT_MAX;
 
     // Find local min, max
-    for (uint32_t i = 10; i < GraphTraceLen; ++i) {
-        if (GraphBuffer[i] > max) max = GraphBuffer[i];
-        if (GraphBuffer[i] < min) min = GraphBuffer[i];
+    for (uint32_t i = 10; i < g_GraphTraceLen; ++i) {
+        if (g_GraphBuffer[i] > max) max = g_GraphBuffer[i];
+        if (g_GraphBuffer[i] < min) min = g_GraphBuffer[i];
     }
 
     if (max != min) {
-        for (uint32_t i = 0; i < GraphTraceLen; ++i) {
-            GraphBuffer[i] = ((long)(GraphBuffer[i] - ((max + min) / 2)) * 256) / (max - min);
+        for (uint32_t i = 0; i < g_GraphTraceLen; ++i) {
+            g_GraphBuffer[i] = ((long)(g_GraphBuffer[i] - ((max + min) / 2)) * 256) / (max - min);
             //marshmelow: adjusted *1000 to *256 to make +/- 128 so demod commands still work
         }
     }
 
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
     // set signal properties low/high/mean/amplitude and is_noise detection
     computeSignalProperties(bits, size);
@@ -2254,9 +2254,9 @@ int CmdSave(const char *Cmd) {
     CLIParserFree(ctx);
 
     if (as_wave)
-        return saveFileWAVE(filename, GraphBuffer, GraphTraceLen);
+        return saveFileWAVE(filename, g_GraphBuffer, g_GraphTraceLen);
     else
-        return saveFilePM3(filename, GraphBuffer, GraphTraceLen);
+        return saveFilePM3(filename, g_GraphBuffer, g_GraphTraceLen);
 }
 
 static int CmdTimeScale(const char *Cmd) {
@@ -2277,14 +2277,14 @@ static int CmdTimeScale(const char *Cmd) {
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
-    CursorScaleFactor = arg_get_dbl_def(ctx, 1, 1);
-    if (CursorScaleFactor <= 0) {
+    g_CursorScaleFactor = arg_get_dbl_def(ctx, 1, 1);
+    if (g_CursorScaleFactor <= 0) {
         PrintAndLogEx(FAILED, "bad, can't have negative or zero timescale factor");
-        CursorScaleFactor = 1;
+        g_CursorScaleFactor = 1;
     }
     int len = 0;
-    CursorScaleFactorUnit[0] = '\x00';
-    CLIParamStrToBuf(arg_get_str(ctx, 2), (uint8_t *)CursorScaleFactorUnit, sizeof(CursorScaleFactorUnit), &len);
+    g_CursorScaleFactorUnit[0] = '\x00';
+    CLIParamStrToBuf(arg_get_str(ctx, 2), (uint8_t *)g_CursorScaleFactorUnit, sizeof(g_CursorScaleFactorUnit), &len);
     CLIParserFree(ctx);
     RepaintGraphWindow();
     return PM3_SUCCESS;
@@ -2338,10 +2338,10 @@ static int CmdDirectionalThreshold(const char *Cmd) {
 
     PrintAndLogEx(INFO, "Applying up threshold: " _YELLOW_("%i") ", down threshold: " _YELLOW_("%i") "\n", up, down);
 
-    directionalThreshold(GraphBuffer, GraphBuffer, GraphTraceLen, up, down);
+    directionalThreshold(g_GraphBuffer, g_GraphBuffer, g_GraphTraceLen, up, down);
 
     // set signal properties low/high/mean/amplitude and isnoice detection
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
     // set signal properties low/high/mean/amplitude and is_noice detection
     computeSignalProperties(bits, size);
@@ -2368,15 +2368,15 @@ static int CmdZerocrossings(const char *Cmd) {
 
     int sign = 1, zc = 0, lastZc = 0;
 
-    for (uint32_t i = 0; i < GraphTraceLen; ++i) {
-        if (GraphBuffer[i] * sign >= 0) {
+    for (uint32_t i = 0; i < g_GraphTraceLen; ++i) {
+        if (g_GraphBuffer[i] * sign >= 0) {
             // No change in sign, reproduce the previous sample count.
             zc++;
-            GraphBuffer[i] = lastZc;
+            g_GraphBuffer[i] = lastZc;
         } else {
             // Change in sign, reset the sample count.
             sign = -sign;
-            GraphBuffer[i] = lastZc;
+            g_GraphBuffer[i] = lastZc;
             if (sign > 0) {
                 lastZc = zc;
                 zc = 0;
@@ -2384,7 +2384,7 @@ static int CmdZerocrossings(const char *Cmd) {
         }
     }
 
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
     // set signal properties low/high/mean/amplitude and is_noise detection
     computeSignalProperties(bits, size);
@@ -2425,7 +2425,7 @@ static int Cmdbin2hex(const char *Cmd) {
     size_t bytelen = (blen + 7) / 8;
     uint8_t *arr = (uint8_t *) calloc(bytelen, sizeof(uint8_t));
     memset(arr, 0, bytelen);
-    BitstreamOut bout = { arr, 0, 0 };
+    BitstreamOut_t bout = { arr, 0, 0 };
 
     for (int i = 0; i < blen; i++) {
         uint8_t c = binarr[i];
@@ -2663,8 +2663,8 @@ static int CmdFSKToNRZ(const char *Cmd) {
     CLIParserFree(ctx);
 
     setClockGrid(0, 0);
-    DemodBufferLen = 0;
-    int ans = FSKToNRZ(GraphBuffer, &GraphTraceLen, clk, fc_low, fc_high);
+    g_DemodBufferLen = 0;
+    int ans = FSKToNRZ(g_GraphBuffer, &g_GraphTraceLen, clk, fc_low, fc_high);
     CmdNorm("");
     RepaintGraphWindow();
     return ans;
@@ -2686,9 +2686,9 @@ static int CmdDataIIR(const char *Cmd) {
     uint8_t k = (arg_get_u32_def(ctx, 1, 0) & 0xFF);
     CLIParserFree(ctx);
 
-    iceSimple_Filter(GraphBuffer, GraphTraceLen, k);
+    iceSimple_Filter(g_GraphBuffer, g_GraphTraceLen, k);
 
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
     // set signal properties low/high/mean/amplitude and is_noise detection
     computeSignalProperties(bits, size);

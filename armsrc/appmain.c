@@ -67,25 +67,25 @@
 #include "spiffs.h"
 #endif
 
-int DBGLEVEL = DBG_ERROR;
+int g_dbglevel = DBG_ERROR;
 uint8_t g_trigger = 0;
 bool g_hf_field_active = false;
 extern uint32_t _stack_start[], _stack_end[];
-struct common_area common_area __attribute__((section(".commonarea")));
+common_area_t g_common_area __attribute__((section(".commonarea")));
 static int button_status = BUTTON_NO_CLICK;
 static bool allow_send_wtx = false;
-uint16_t tearoff_delay_us = 0;
-bool tearoff_enabled = false;
+uint16_t g_tearoff_delay_us = 0;
+bool g_tearoff_enabled = false;
 
 int tearoff_hook(void) {
-    if (tearoff_enabled) {
-        if (tearoff_delay_us == 0) {
+    if (g_tearoff_enabled) {
+        if (g_tearoff_delay_us == 0) {
             Dbprintf(_RED_("No tear-off delay configured!"));
             return PM3_SUCCESS; // SUCCESS = the hook didn't do anything
         }
-        SpinDelayUsPrecision(tearoff_delay_us);
+        SpinDelayUsPrecision(g_tearoff_delay_us);
         FpgaWriteConfWord(FPGA_MAJOR_MODE_OFF);
-        tearoff_enabled = false;
+        g_tearoff_enabled = false;
         Dbprintf(_YELLOW_("Tear-off triggered!"));
         return PM3_ETEAROFF;
     } else {
@@ -212,11 +212,7 @@ static void MeasureAntennaTuning(void) {
     FpgaWriteConfWord(FPGA_MAJOR_MODE_HF_READER);
     SpinDelay(50);
 
-#if defined RDV4
-    payload.v_hf = (MAX_ADC_HF_VOLTAGE_RDV40 * SumAdc(ADC_CHAN_HF_RDV40, 32)) >> 15;
-#else
     payload.v_hf = (MAX_ADC_HF_VOLTAGE * SumAdc(ADC_CHAN_HF, 32)) >> 15;
-#endif
 
     FpgaWriteConfWord(FPGA_MAJOR_MODE_OFF);
     reply_ng(CMD_MEASURE_ANTENNA_TUNING, PM3_SUCCESS, (uint8_t *)&payload, sizeof(payload));
@@ -226,11 +222,7 @@ static void MeasureAntennaTuning(void) {
 // Measure HF in milliVolt
 static uint16_t MeasureAntennaTuningHfData(void) {
 
-#if defined RDV4
-    return (MAX_ADC_HF_VOLTAGE_RDV40 * SumAdc(ADC_CHAN_HF_RDV40, 32)) >> 15;
-#else
     return (MAX_ADC_HF_VOLTAGE * SumAdc(ADC_CHAN_HF, 32)) >> 15;
-#endif
 
 }
 
@@ -282,7 +274,7 @@ static void SendVersion(void) {
         strncat(VersionString, "\n", sizeof(VersionString) - strlen(VersionString) - 1);
     }
 
-    FormatVersionInformation(temp, sizeof(temp), "       os: ", &version_information);
+    FormatVersionInformation(temp, sizeof(temp), "       os: ", &g_version_information);
     strncat(VersionString, temp, sizeof(VersionString) - strlen(VersionString) - 1);
     strncat(VersionString, "\n", sizeof(VersionString) - strlen(VersionString) - 1);
 
@@ -303,7 +295,7 @@ static void SendVersion(void) {
 #ifndef WITH_NO_COMPRESSION
     // Send Chip ID and used flash memory
     uint32_t text_and_rodata_section_size = (uint32_t)__data_src_start__ - (uint32_t)_flash_start;
-    uint32_t compressed_data_section_size = common_area.arg1;
+    uint32_t compressed_data_section_size = g_common_area.arg1;
 #endif
 
     struct p {
@@ -336,7 +328,7 @@ static void TimingIntervalAcquisition(void) {
 
 static void print_debug_level(void) {
     char dbglvlstr[20] = {0};
-    switch (DBGLEVEL) {
+    switch (g_dbglevel) {
         case DBG_NONE:
             sprintf(dbglvlstr, "none");
             break;
@@ -353,7 +345,7 @@ static void print_debug_level(void) {
             sprintf(dbglvlstr, "extended");
             break;
     }
-    Dbprintf("  Debug log level......... %d ( " _YELLOW_("%s")" )", DBGLEVEL, dbglvlstr);
+    Dbprintf("  Debug log level......... %d ( " _YELLOW_("%s")" )", g_dbglevel, dbglvlstr);
 }
 
 // measure the Connection Speed by sending SpeedTestBufferSize bytes to client and measuring the elapsed time.
@@ -610,12 +602,8 @@ void ListenReaderField(uint8_t limit) {
 
     if (limit == HF_ONLY) {
 
-#if defined RDV4
         // iceman,  useless,  since we are measuring readerfield,  not our field.  My tests shows a max of 20v from a reader.
-        hf_av = hf_max = (MAX_ADC_HF_VOLTAGE_RDV40 * SumAdc(ADC_CHAN_HF_RDV40, 32)) >> 15;
-#else
         hf_av = hf_max = (MAX_ADC_HF_VOLTAGE * SumAdc(ADC_CHAN_HF, 32)) >> 15;
-#endif
         Dbprintf("HF 13.56MHz Baseline: %dmV", hf_av);
         hf_baseline = hf_av;
     }
@@ -666,11 +654,7 @@ void ListenReaderField(uint8_t limit) {
                     LED_B_OFF();
             }
 
-#if defined RDV4
-            hf_av_new = (MAX_ADC_HF_VOLTAGE_RDV40 * SumAdc(ADC_CHAN_HF_RDV40, 32)) >> 15;
-#else
             hf_av_new = (MAX_ADC_HF_VOLTAGE * SumAdc(ADC_CHAN_HF, 32)) >> 15;
-#endif
             // see if there's a significant change
             if (ABS(hf_av - hf_av_new) > REPORT_CHANGE) {
                 Dbprintf("HF 13.56MHz Field Change: %5dmV", hf_av_new);
@@ -772,7 +756,7 @@ static void PacketReceived(PacketCommandNG *packet) {
         }
         // emulator
         case CMD_SET_DBGMODE: {
-            DBGLEVEL = packet->data.asBytes[0];
+            g_dbglevel = packet->data.asBytes[0];
             print_debug_level();
             reply_ng(CMD_SET_DBGMODE, PM3_SUCCESS, NULL, 0);
             break;
@@ -787,11 +771,11 @@ static void PacketReceived(PacketCommandNG *packet) {
             if (payload->on && payload->off)
                 reply_ng(CMD_SET_TEAROFF, PM3_EINVARG, NULL, 0);
             if (payload->on)
-                tearoff_enabled = true;
+                g_tearoff_enabled = true;
             if (payload->off)
-                tearoff_enabled = false;
+                g_tearoff_enabled = false;
             if (payload->delay_us > 0)
-                tearoff_delay_us = payload->delay_us;
+                g_tearoff_delay_us = payload->delay_us;
             reply_ng(CMD_SET_TEAROFF, PM3_SUCCESS, NULL, 0);
             break;
         }
@@ -2094,7 +2078,7 @@ static void PacketReceived(PacketCommandNG *packet) {
             uint8_t filename[32];
             uint8_t *pfilename = packet->data.asBytes;
             memcpy(filename, pfilename, SPIFFS_OBJ_NAME_LEN);
-            if (DBGLEVEL >= DBG_DEBUG) Dbprintf("Filename received for spiffs dump : %s", filename);
+            if (g_dbglevel >= DBG_DEBUG) Dbprintf("Filename received for spiffs dump : %s", filename);
 
             uint32_t size = packet->oldarg[1];
 
@@ -2121,7 +2105,7 @@ static void PacketReceived(PacketCommandNG *packet) {
             uint8_t filename[32];
             uint8_t *pfilename = packet->data.asBytes;
             memcpy(filename, pfilename, SPIFFS_OBJ_NAME_LEN);
-            if (DBGLEVEL >= DBG_DEBUG) {
+            if (g_dbglevel >= DBG_DEBUG) {
                 Dbprintf("Filename received for spiffs STAT : %s", filename);
             }
 
@@ -2144,7 +2128,7 @@ static void PacketReceived(PacketCommandNG *packet) {
             } PACKED;
             struct p *payload = (struct p *) packet->data.asBytes;
 
-            if (DBGLEVEL >= DBG_DEBUG) {
+            if (g_dbglevel >= DBG_DEBUG) {
                 Dbprintf("Filename received for spiffs REMOVE : %s", payload->fn);
             }
 
@@ -2163,7 +2147,7 @@ static void PacketReceived(PacketCommandNG *packet) {
             } PACKED;
             struct p *payload = (struct p *) packet->data.asBytes;
 
-            if (DBGLEVEL >= DBG_DEBUG) {
+            if (g_dbglevel >= DBG_DEBUG) {
                 Dbprintf("SPIFFS RENAME");
                 Dbprintf("Source........ %s", payload->src);
                 Dbprintf("Destination... %s", payload->dest);
@@ -2183,7 +2167,7 @@ static void PacketReceived(PacketCommandNG *packet) {
             } PACKED;
             struct p *payload = (struct p *) packet->data.asBytes;
 
-            if (DBGLEVEL >= DBG_DEBUG) {
+            if (g_dbglevel >= DBG_DEBUG) {
                 Dbprintf("SPIFFS COPY");
                 Dbprintf("Source........ %s", payload->src);
                 Dbprintf("Destination... %s", payload->dest);
@@ -2198,7 +2182,7 @@ static void PacketReceived(PacketCommandNG *packet) {
 
             flashmem_write_t *payload = (flashmem_write_t *)packet->data.asBytes;
 
-            if (DBGLEVEL >= DBG_DEBUG) {
+            if (g_dbglevel >= DBG_DEBUG) {
                 Dbprintf("SPIFFS WRITE, dest `%s` with APPEND set to: %c", payload->fn, payload->append ? 'Y' : 'N');
             }
 
@@ -2413,8 +2397,8 @@ static void PacketReceived(PacketCommandNG *packet) {
             break;
         }
         case CMD_START_FLASH: {
-            if (common_area.flags.bootrom_present) {
-                common_area.command = COMMON_AREA_COMMAND_ENTER_FLASH_MODE;
+            if (g_common_area.flags.bootrom_present) {
+                g_common_area.command = COMMON_AREA_COMMAND_ENTER_FLASH_MODE;
             }
             usb_disable();
             AT91C_BASE_RSTC->RSTC_RCR = RST_CONTROL_KEY | AT91C_RSTC_PROCRST;
@@ -2424,7 +2408,7 @@ static void PacketReceived(PacketCommandNG *packet) {
         }
         case CMD_DEVICE_INFO: {
             uint32_t dev_info = DEVICE_INFO_FLAG_OSIMAGE_PRESENT | DEVICE_INFO_FLAG_CURRENT_MODE_OS;
-            if (common_area.flags.bootrom_present) {
+            if (g_common_area.flags.bootrom_present) {
                 dev_info |= DEVICE_INFO_FLAG_BOOTROM_PRESENT;
             }
             reply_old(CMD_DEVICE_INFO, dev_info, 0, 0, 0, 0);

@@ -105,7 +105,7 @@ int demodHID(bool verbose) {
     //raw fsk demod no manchester decoding no start bit finding just get binary from wave
     uint32_t hi2 = 0, hi = 0, lo = 0;
 
-    uint8_t bits[GraphTraceLen];
+    uint8_t bits[g_GraphTraceLen];
     size_t size = getFromGraphBuf(bits);
     if (size == 0) {
         PrintAndLogEx(DEBUG, "DEBUG: Error - " _RED_("HID not enough samples"));
@@ -146,7 +146,7 @@ int demodHID(bool verbose) {
     }
     PrintAndLogEx(INFO, "raw: " _GREEN_("%08x%08x%08x"), hi2, hi, lo);
 
-    PrintAndLogEx(DEBUG, "DEBUG: HID idx: %d, Len: %zu, Printing Demod Buffer: ", idx, size);
+    PrintAndLogEx(DEBUG, "DEBUG: HID idx: %d, Len: %zu, Printing DemodBuffer: ", idx, size);
     if (g_debugMode) {
         PrintAndLogEx(DEBUG, "raw: " _GREEN_("%08x%08x%08x"), hi2, hi, lo);
 
@@ -556,7 +556,7 @@ static int CmdHIDBrute(const char *Cmd) {
     fin_hi = fin_low = false;
     do {
 
-        if (!session.pm3_present) {
+        if (!g_session.pm3_present) {
             PrintAndLogEx(WARNING, "Device offline\n");
             return PM3_ENODATA;
         }

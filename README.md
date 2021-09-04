@@ -38,7 +38,7 @@
 |[Notes on file formats used with Proxmark3](/doc/extensions_notes.md)|[Notes on MFU binary format](/doc/mfu_binary_format_notes.md)|[Notes on FPGA & ARM](/doc/fpga_arm_notes.md)|
 |[Developing standalone mode](/armsrc/Standalone/readme.md)|[Wiki about standalone mode](https://github.com/RfidResearchGroup/proxmark3/wiki/Standalone-mode)|[Notes on Magic cards](/doc/magic_cards_notes.md)|
 |[Notes on Color usage](/doc/colors_notes.md)|[Makefile vs CMake](/doc/md/Development/Makefile-vs-CMake.md)|[Notes on Cloner guns](/doc/cloner_notes.md)|
-|[Notes on cliparser usage](/doc/cliparser.md)|[Notes on clocks](/doc/clocks.md)||
+|[Notes on cliparser usage](/doc/cliparser.md)|[Notes on clocks](/doc/clocks.md)|[Notes on DESFire usage](/doc/desfire.md)|
 
 # How to build?
 ## Proxmark3 RDV4
@@ -60,8 +60,9 @@ We define generic Proxmark3 platforms as following devices.
    - **Note**: unknown pin assignments.
  - ⚠  Ryscorp Proxmark3 Pro 
    - **Note**: device has different fpga and unknown pin assignments.
- - ⚠  i-copy 
-   - **Note**: reversed hw,  experimental support maintained in [icopyx-community pm3 repo](https://github.com/iCopy-X-Community/icopyx-community-pm3)
+ - ⚠  iCopy-X
+   - **Note**: experimental support, currently incompatible with iCopy-X GUI as Proxmark client commands are now using cliparser.
+   - **Note**: see also [icopyx-community repos](https://github.com/iCopy-X-Community/) for upstream sources, reversed hw etc.
 
 **Unknown support status**
  - ⚠  VX
@@ -133,7 +134,7 @@ The [public roadmap](https://github.com/RfidResearchGroup/proxmark3/wiki/Public-
 ## Supported operative systems 
 This repo compiles nicely on 
    - WSL1 on Windows 10
-   - Proxspace enviroment [release v3.9](https://github.com/Gator96100/ProxSpace/releases)
+   - Proxspace enviroment [release v3.10](https://github.com/Gator96100/ProxSpace/releases)
    - Windows/MinGW environment
    - Ubuntu, ParrotOS, Gentoo, Pentoo, Kali, NetHunter, Arch Linux, Fedora, Debian, Raspbian
    - Android / Termux

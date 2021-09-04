@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright (C) 2018 Merlok
+// Copyright (C) 2018, 2021 Merlok
 //
 // This code is licensed to you under the terms of the GNU GPL, version 2 or,
 // at your option, any later version. See the LICENSE.txt file for the text of
@@ -15,6 +15,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <mbedtls/pk.h>
+
+#define CRYPTO_AES_BLOCK_SIZE 16
+#define CRYPTO_AES128_KEY_SIZE 16
 
 void des_encrypt(void *out, const void *in, const void *key);
 void des_decrypt(void *out, const void *in, const void *key);

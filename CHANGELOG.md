@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 This project uses the changelog in accordance with [keepchangelog](http://keepachangelog.com/). Please use this to write notable changes, which is not the same as git commit log...
 
 ## [unreleased][unreleased]
+ - Added option --mem to `hf mf nested`, from icopyx source (@doegox)
+ - Port fpga-xc3s100e and icopyx source code specificities to this repo (@doegox)
+ - `hf mfdes` - Transactions. commit, abort, commit reader id. (@merlokk)
+ - `hf mfdes` - LRP secure channel for Desfire Light. (@merlokk)
+ - `hf mfdes` - commands refactoring. now fully works: des,2tdea,3tdea,aes keys with d40,ev1,ev2 channels and native/nativeiso/iso command sets(@merlokk)
+ - Changed `lf em 410x *` - now better text (@clach04)
+ - Fix `hf mfu dump` - now sets keytype correct #1426 (@axisray)
+ - Add new standalone mode `hf_mfcsim` which can load dump from flash and simulate Mifare Classic 1K card (@axisray)
  - Added support to demodulate Electra tags and column parity check for EM410x (@doegox)
  - Fix demod plot for various demodulations (@doegox)
  - Fix `lf t55xx detect/rdbl/dump` - to override if user set `lf config` and use default values during operation (@iceman1001)

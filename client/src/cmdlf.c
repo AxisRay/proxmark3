@@ -60,7 +60,7 @@
 #include "cmdlfvisa2000.h"  // for VISA2000 menu
 #include "pm3_cmd.h"        // for LF_CMDREAD_MAX_EXTRA_SYMBOLS
 
-static bool g_lf_threshold_set = false;
+static bool gs_lf_threshold_set = false;
 
 static int CmdHelp(const char *Cmd);
 
@@ -138,7 +138,7 @@ static int CmdLFTune(const char *Cmd) {
         return PM3_EINVARG;
     }
 
-    barMode_t style = session.bar_mode;
+    barMode_t style = g_session.bar_mode;
     if (is_bar)
         style = STYLE_BAR;
     if (is_mix)
@@ -252,7 +252,7 @@ int CmdLFCommandRead(const char *Cmd) {
     bool cm = arg_get_lit(ctx, 8);
     CLIParserFree(ctx);
 
-    if (session.pm3_present == false)
+    if (g_session.pm3_present == false)
         return PM3_ENOTTY;
 
 #define PAYLOAD_HEADER_SIZE (12 + (3 * LF_CMDREAD_MAX_EXTRA_SYMBOLS))
@@ -367,12 +367,12 @@ int CmdFlexdemod(const char *Cmd) {
 #endif
     int i, j, start, bit, sum;
 
-    int data[GraphTraceLen];
-    memcpy(data, GraphBuffer, GraphTraceLen);
+    int data[g_GraphTraceLen];
+    memcpy(data, g_GraphBuffer, g_GraphTraceLen);
 
-    size_t size = GraphTraceLen;
+    size_t size = g_GraphTraceLen;
 
-    for (i = 0; i < GraphTraceLen; ++i)
+    for (i = 0; i < g_GraphTraceLen; ++i)
         data[i] = (data[i] < 0) ? -1 : 1;
 
     for (start = 0; start < size - LONG_WAIT; start++) {
@@ -417,16 +417,16 @@ int CmdFlexdemod(const char *Cmd) {
 
     }
 
-    // iceman,  use demod buffer?  blue line?
+    // iceman,  use g_DemodBuffer?  blue line?
     // HACK writing back to graphbuffer.
-    GraphTraceLen = 32 * 64;
+    g_GraphTraceLen = 32 * 64;
     i = 0;
     for (bit = 0; bit < 64; bit++) {
 
         int phase = (bits[bit] == 0) ? 0 : 1;
 
         for (j = 0; j < 32; j++) {
-            GraphBuffer[i++] = phase;
+            g_GraphBuffer[i++] = phase;
             phase = !phase;
         }
     }
@@ -475,7 +475,7 @@ int lf_config_savereset(sample_config *config) {
 }
 
 int lf_getconfig(sample_config *config) {
-    if (!session.pm3_present) return PM3_ENOTTY;
+    if (!g_session.pm3_present) return PM3_ENOTTY;
 
     if (config == NULL)
         return PM3_EINVARG;
@@ -493,7 +493,7 @@ int lf_getconfig(sample_config *config) {
 }
 
 int lf_config(sample_config *config) {
-    if (!session.pm3_present) return PM3_ENOTTY;
+    if (!g_session.pm3_present) return PM3_ENOTTY;
 
     clearCommandBuffer();
     if (config != NULL)
@@ -548,7 +548,7 @@ int CmdLFConfig(const char *Cmd) {
     int16_t trigg = arg_get_int_def(ctx, 10, -1);
     CLIParserFree(ctx);
 
-    if (session.pm3_present == false)
+    if (g_session.pm3_present == false)
         return PM3_ENOTTY;
 
     // if called with no params, just print the device config
@@ -578,7 +578,7 @@ int CmdLFConfig(const char *Cmd) {
         config.divisor = LF_DIVISOR_125;
         config.samples_to_skip = 0;
         config.trigger_threshold = 0;
-        g_lf_threshold_set = false;
+        gs_lf_threshold_set = false;
     }
 
     if (use_125)
@@ -621,7 +621,7 @@ int CmdLFConfig(const char *Cmd) {
 
     if (trigg > -1) {
         config.trigger_threshold = trigg;
-        g_lf_threshold_set = (config.trigger_threshold > 0);
+        gs_lf_threshold_set = (config.trigger_threshold > 0);
     }
 
     config.samples_to_skip = skip;
@@ -629,7 +629,7 @@ int CmdLFConfig(const char *Cmd) {
 }
 
 int lf_read(bool verbose, uint32_t samples) {
-    if (!session.pm3_present) return PM3_ENOTTY;
+    if (!g_session.pm3_present) return PM3_ENOTTY;
 
     struct p {
         uint32_t samples : 31;
@@ -643,7 +643,7 @@ int lf_read(bool verbose, uint32_t samples) {
     clearCommandBuffer();
     SendCommandNG(CMD_LF_ACQ_RAW_ADC, (uint8_t *)&payload, sizeof(payload));
     PacketResponseNG resp;
-    if (g_lf_threshold_set) {
+    if (gs_lf_threshold_set) {
         WaitForResponse(CMD_LF_ACQ_RAW_ADC, &resp);
     } else {
         if (!WaitForResponseTimeout(CMD_LF_ACQ_RAW_ADC, &resp, 2500)) {
@@ -681,7 +681,7 @@ int CmdLFRead(const char *Cmd) {
     bool cm = arg_get_lit(ctx, 3);
     CLIParserFree(ctx);
 
-    if (session.pm3_present == false)
+    if (g_session.pm3_present == false)
         return PM3_ENOTTY;
 
     if (cm) {
@@ -695,7 +695,7 @@ int CmdLFRead(const char *Cmd) {
 }
 
 int lf_sniff(bool verbose, uint32_t samples) {
-    if (!session.pm3_present) return PM3_ENOTTY;
+    if (!g_session.pm3_present) return PM3_ENOTTY;
 
     struct p {
         uint32_t samples : 31;
@@ -709,7 +709,7 @@ int lf_sniff(bool verbose, uint32_t samples) {
     clearCommandBuffer();
     SendCommandNG(CMD_LF_SNIFF_RAW_ADC, (uint8_t *)&payload, sizeof(payload));
     PacketResponseNG resp;
-    if (g_lf_threshold_set) {
+    if (gs_lf_threshold_set) {
         WaitForResponse(CMD_LF_SNIFF_RAW_ADC, &resp);
     } else {
         if (!WaitForResponseTimeout(CMD_LF_SNIFF_RAW_ADC, &resp, 2500)) {
@@ -750,7 +750,7 @@ int CmdLFSniff(const char *Cmd) {
     bool cm = arg_get_lit(ctx, 3);
     CLIParserFree(ctx);
 
-    if (session.pm3_present == false)
+    if (g_session.pm3_present == false)
         return PM3_ENOTTY;
 
     if (cm) {
@@ -765,8 +765,8 @@ int CmdLFSniff(const char *Cmd) {
 
 static void lf_chk_bitstream(void) {
     // convert to bitstream if necessary
-    for (int i = 0; i < (int)(GraphTraceLen / 2); i++) {
-        if (GraphBuffer[i] > 1 || GraphBuffer[i] < 0) {
+    for (int i = 0; i < (int)(g_GraphTraceLen / 2); i++) {
+        if (g_GraphBuffer[i] > 1 || g_GraphBuffer[i] < 0) {
             CmdGetBitStream("");
             PrintAndLogEx(INFO, "converted Graphbuffer to bitstream values (0|1)");
             break;
@@ -774,9 +774,9 @@ static void lf_chk_bitstream(void) {
     }
 }
 
-// Uploads GraphBuffer to device, in order to be used for LF SIM.
+// Uploads g_GraphBuffer to device, in order to be used for LF SIM.
 int lfsim_upload_gb(void) {
-    PrintAndLogEx(DEBUG, "DEBUG: Uploading %zu bytes", GraphTraceLen);
+    PrintAndLogEx(DEBUG, "DEBUG: Uploading %zu bytes", g_GraphTraceLen);
 
     struct pupload {
         uint8_t flag;
@@ -790,20 +790,20 @@ int lfsim_upload_gb(void) {
     payload_up.flag = 0x1;
 
     // fast push mode
-    conn.block_after_ACK = true;
+    g_conn.block_after_ACK = true;
 
     PacketResponseNG resp;
 
     //can send only 512 bits at a time (1 byte sent per bit...)
     PrintAndLogEx(INFO, "." NOLF);
-    for (uint16_t i = 0; i < GraphTraceLen; i += PM3_CMD_DATA_SIZE - 3) {
+    for (uint16_t i = 0; i < g_GraphTraceLen; i += PM3_CMD_DATA_SIZE - 3) {
 
-        size_t len = MIN((GraphTraceLen - i), PM3_CMD_DATA_SIZE - 3);
+        size_t len = MIN((g_GraphTraceLen - i), PM3_CMD_DATA_SIZE - 3);
         clearCommandBuffer();
         payload_up.offset = i;
 
         for (uint16_t j = 0; j < len; j++)
-            payload_up.data[j] = GraphBuffer[i + j];
+            payload_up.data[j] = g_GraphBuffer[i + j];
 
         SendCommandNG(CMD_LF_UPLOAD_SIM_SAMPLES, (uint8_t *)&payload_up, sizeof(struct pupload));
         WaitForResponse(CMD_LF_UPLOAD_SIM_SAMPLES, &resp);
@@ -818,12 +818,12 @@ int lfsim_upload_gb(void) {
     PrintAndLogEx(NORMAL, "");
 
     // Disable fast mode before last command
-    conn.block_after_ACK = false;
+    g_conn.block_after_ACK = false;
     return PM3_SUCCESS;
 }
 
 //Attempt to simulate any wave in buffer (one bit per output sample)
-// converts GraphBuffer to bitstream (based on zero crossings) if needed.
+// converts g_GraphBuffer to bitstream (based on zero crossings) if needed.
 int CmdLFSim(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "lf sim",
@@ -842,13 +842,13 @@ int CmdLFSim(const char *Cmd) {
     uint16_t gap = arg_get_u32_def(ctx, 1, 0);
     CLIParserFree(ctx);
 
-    if (session.pm3_present == false) {
+    if (g_session.pm3_present == false) {
         PrintAndLogEx(DEBUG, "DEBUG: no proxmark present");
         return PM3_ENOTTY;
     }
 
     // sanity check
-    if (GraphTraceLen < 20) {
+    if (g_GraphTraceLen < 20) {
         PrintAndLogEx(ERR, "No data in Graphbuffer");
         return PM3_ENODATA;
     }
@@ -862,7 +862,7 @@ int CmdLFSim(const char *Cmd) {
         uint16_t len;
         uint16_t gap;
     } PACKED payload;
-    payload.len = GraphTraceLen;
+    payload.len = g_GraphTraceLen;
     payload.gap = gap;
 
     clearCommandBuffer();
@@ -871,11 +871,11 @@ int CmdLFSim(const char *Cmd) {
 }
 
 // sim fsk data given clock, fcHigh, fcLow, invert
-// - allow pull data from DemodBuffer
+// - allow pull data from g_DemodBuffer
 int CmdLFfskSim(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "lf simfsk",
-                  "Simulate FSK tag from demodbuffer or input. There are about four FSK modulations to know of.\n"
+                  "Simulate FSK tag from DemodBuffer or input. There are about four FSK modulations to know of.\n"
                   "FSK1  -  where fc/8 = high  and fc/5 = low\n"
                   "FSK1a -  is inverted FSK1,  ie:   fc/5 = high and fc/8 = low\n"
                   "FSK2  -  where fc/10 = high  and fc/8 = low\n"
@@ -912,8 +912,8 @@ int CmdLFfskSim(const char *Cmd) {
     CLIParserFree(ctx);
 
     // No args
-    if (raw_len == 0 && DemodBufferLen == 0) {
-        PrintAndLogEx(ERR, "No user supplied data nor inside Demodbuffer");
+    if (raw_len == 0 && g_DemodBufferLen == 0) {
+        PrintAndLogEx(ERR, "No user supplied data nor inside DemodBuffer");
         return PM3_EINVARG;
     }
 
@@ -925,10 +925,10 @@ int CmdLFfskSim(const char *Cmd) {
     uint8_t bs[256] = {0x00};
     int bs_len = hextobinarray((char *)bs, raw);
     if (bs_len == 0) {
-        // Using data from DemodBuffer
-        // might be able to autodetect FC and clock from Graphbuffer if using demod buffer
+        // Using data from g_DemodBuffer
+        // might be able to autodetect FC and clock from Graphbuffer if using g_DemodBuffer
         // will need clock, fchigh, fclow and bitstream
-        PrintAndLogEx(INFO, "No user supplied data, using Demodbuffer...");
+        PrintAndLogEx(INFO, "No user supplied data, using DemodBuffer...");
 
         if (clk == 0 || fchigh == 0 || fclow == 0) {
             int firstClockEdge = 0;
@@ -939,7 +939,7 @@ int CmdLFfskSim(const char *Cmd) {
                 fclow = 0;
             }
         }
-        PrintAndLogEx(DEBUG, "Detected rf/%u, High fc/%u, Low fc/%u, n %zu ", clk, fchigh, fclow, DemodBufferLen);
+        PrintAndLogEx(DEBUG, "Detected rf/%u, High fc/%u, Low fc/%u, n %zu ", clk, fchigh, fclow, g_DemodBufferLen);
 
     } else {
         setDemodBuff(bs, bs_len, 0);
@@ -961,7 +961,7 @@ int CmdLFfskSim(const char *Cmd) {
         PrintAndLogEx(DEBUG, "Autodetection of smaller clock failed, falling back to fc/%u", fclow);
     }
 
-    size_t size = DemodBufferLen;
+    size_t size = g_DemodBufferLen;
     if (size > (PM3_CMD_DATA_SIZE - sizeof(lf_fsksim_t))) {
         PrintAndLogEx(WARNING, "DemodBuffer too long for current implementation - length: %zu - max: %zu", size, PM3_CMD_DATA_SIZE - sizeof(lf_fsksim_t));
         PrintAndLogEx(INFO, "Continuing with trimmed down data");
@@ -973,7 +973,7 @@ int CmdLFfskSim(const char *Cmd) {
     payload->fclow =  fclow;
     payload->separator = separator;
     payload->clock = clk;
-    memcpy(payload->data, DemodBuffer, size);
+    memcpy(payload->data, g_DemodBuffer, size);
 
     clearCommandBuffer();
     SendCommandNG(CMD_LF_FSK_SIMULATE, (uint8_t *)payload,  sizeof(lf_fsksim_t) + size);
@@ -984,11 +984,11 @@ int CmdLFfskSim(const char *Cmd) {
 }
 
 // sim ask data given clock, invert, manchester or raw, separator
-// - allow pull data from DemodBuffer
+// - allow pull data from g_DemodBuffer
 int CmdLFaskSim(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "lf simask",
-                  "Simulate ASK tag from demodbuffer or input",
+                  "Simulate ASK tag from DemodBuffer or input",
                   "lf simask --clk 32 --am -d 0102030405   --> simulate ASK/MAN rf/32\n"
                   "lf simask --clk 32 --bi -d 0102030405   --> simulate ASK/BIPHASE rf/32\n\n"
                   "lf simask --clk 64 --am -d ffbd8001686f1924               --> simulate a EM410x tag\n"
@@ -1033,18 +1033,18 @@ int CmdLFaskSim(const char *Cmd) {
         encoding = 0;
 
     // No args
-    if (raw_len == 0 && DemodBufferLen == 0) {
-        PrintAndLogEx(ERR, "No user supplied data nor any inside Demodbuffer");
+    if (raw_len == 0 && g_DemodBufferLen == 0) {
+        PrintAndLogEx(ERR, "No user supplied data nor any inside DemodBuffer");
         return PM3_EINVARG;
     }
 
     uint8_t bs[256] = {0x00};
     int bs_len = hextobinarray((char *)bs, raw);
     if (bs_len == 0) {
-        // Using data from DemodBuffer
-        // might be able to autodetect FC and clock from Graphbuffer if using demod buffer
+        // Using data from g_DemodBuffer
+        // might be able to autodetect FC and clock from Graphbuffer if using g_DemodBuffer
         // will need carrier, clock, and bitstream
-        PrintAndLogEx(INFO, "No user supplied data, using Demodbuffer...");
+        PrintAndLogEx(INFO, "No user supplied data, using DemodBuffer...");
 
         if (clk == 0) {
             int res = GetAskClock("0", verbose);
@@ -1055,7 +1055,7 @@ int CmdLFaskSim(const char *Cmd) {
             }
         }
 
-        PrintAndLogEx(DEBUG, "Detected rf/%u, n %zu ", clk, DemodBufferLen);
+        PrintAndLogEx(DEBUG, "Detected rf/%u, n %zu ", clk, g_DemodBufferLen);
 
     } else {
         setDemodBuff(bs, bs_len, 0);
@@ -1072,7 +1072,7 @@ int CmdLFaskSim(const char *Cmd) {
         PrintAndLogEx(DEBUG, "ASK/RAW needs half rf. Using rf/%u", clk);
     }
 
-    size_t size = DemodBufferLen;
+    size_t size = g_DemodBufferLen;
     if (size > (PM3_CMD_DATA_SIZE - sizeof(lf_asksim_t))) {
         PrintAndLogEx(WARNING, "DemodBuffer too long for current implementation - length: %zu - max: %zu", size, PM3_CMD_DATA_SIZE - sizeof(lf_asksim_t));
         PrintAndLogEx(INFO, "Continuing with trimmed down data");
@@ -1084,7 +1084,7 @@ int CmdLFaskSim(const char *Cmd) {
     payload->invert = invert;
     payload->separator = separator;
     payload->clock = clk;
-    memcpy(payload->data, DemodBuffer, size);
+    memcpy(payload->data, g_DemodBuffer, size);
 
     clearCommandBuffer();
     SendCommandNG(CMD_LF_ASK_SIMULATE, (uint8_t *)payload,  sizeof(lf_asksim_t) + size);
@@ -1095,12 +1095,12 @@ int CmdLFaskSim(const char *Cmd) {
 }
 
 // sim psk data given carrier, clock, invert
-// - allow pull data from DemodBuffer or parameters
+// - allow pull data from g_DemodBuffer or parameters
 int CmdLFpskSim(const char *Cmd) {
 
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "lf simpsk",
-                  "Simulate PSK tag from demodbuffer or input",
+                  "Simulate PSK tag from DemodBuffer or input",
                   "lf simpsk -1 --clk 40 --fc 4 -d 01020304   --> simulate PSK1 rf/40 psksub fc/4, data 01020304\n\n"
                   "lf simpsk -1 --clk 32 --fc 2 -d a0000000bd989a11   --> simulate a indala tag manually"
                  );
@@ -1147,8 +1147,8 @@ int CmdLFpskSim(const char *Cmd) {
         psk_type = 3;
 
     // No args
-    if (raw_len == 0 && DemodBufferLen == 0) {
-        PrintAndLogEx(ERR, "No user supplied data nor any inside Demodbuffer");
+    if (raw_len == 0 && g_DemodBufferLen == 0) {
+        PrintAndLogEx(ERR, "No user supplied data nor any inside DemodBuffer");
         return PM3_EINVARG;
     }
 
@@ -1156,10 +1156,10 @@ int CmdLFpskSim(const char *Cmd) {
     int bs_len = hextobinarray((char *)bs, raw);
 
     if (bs_len == 0) {
-        // Using data from DemodBuffer
-        // might be able to autodetect FC and clock from Graphbuffer if using demod buffer
+        // Using data from g_DemodBuffer
+        // might be able to autodetect FC and clock from Graphbuffer if using g_DemodBuffer
         // will need carrier, clock, and bitstream
-        PrintAndLogEx(INFO, "No user supplied data, using Demodbuffer...");
+        PrintAndLogEx(INFO, "No user supplied data, using DemodBuffer...");
 
         int res;
         if (clk == 0) {
@@ -1180,7 +1180,7 @@ int CmdLFpskSim(const char *Cmd) {
             }
         }
 
-        PrintAndLogEx(DEBUG, "Detected rf/%u, fc/%u, n %zu ", clk, carrier, DemodBufferLen);
+        PrintAndLogEx(DEBUG, "Detected rf/%u, fc/%u, n %zu ", clk, carrier, g_DemodBufferLen);
 
     } else {
         setDemodBuff(bs, bs_len, 0);
@@ -1193,12 +1193,12 @@ int CmdLFpskSim(const char *Cmd) {
 
     if (psk_type == 2) {
         //need to convert psk2 to psk1 data before sim
-        psk2TOpsk1(DemodBuffer, DemodBufferLen);
+        psk2TOpsk1(g_DemodBuffer, g_DemodBufferLen);
     } else if (psk_type == 3) {
         PrintAndLogEx(INFO, "PSK3 not yet available. Falling back to PSK1");
     }
 
-    size_t size = DemodBufferLen;
+    size_t size = g_DemodBufferLen;
     if (size > (PM3_CMD_DATA_SIZE - sizeof(lf_psksim_t))) {
         PrintAndLogEx(WARNING, "DemodBuffer too long for current implementation - length: %zu - max: %zu", size, PM3_CMD_DATA_SIZE - sizeof(lf_psksim_t));
         PrintAndLogEx(INFO, "Continuing with trimmed down data");
@@ -1209,7 +1209,7 @@ int CmdLFpskSim(const char *Cmd) {
     payload->carrier =  carrier;
     payload->invert = invert;
     payload->clock = clk;
-    memcpy(payload->data, DemodBuffer, size);
+    memcpy(payload->data, g_DemodBuffer, size);
     clearCommandBuffer();
     SendCommandNG(CMD_LF_PSK_SIMULATE, (uint8_t *)payload,  sizeof(lf_psksim_t) + size);
     free(payload);
@@ -1245,7 +1245,7 @@ int CmdLFSimBidir(const char *Cmd) {
 
 int CmdVchDemod(const char *Cmd) {
 
-    if (GraphTraceLen < 4096) {
+    if (g_GraphTraceLen < 4096) {
         PrintAndLogEx(DEBUG, "debug; VchDemod - too few samples");
         return PM3_EINVARG;
     }
@@ -1274,9 +1274,9 @@ int CmdVchDemod(const char *Cmd) {
 
     // It does us no good to find the sync pattern, with fewer than 2048 samples after it.
 
-    for (i = 0; i < (GraphTraceLen - 2048); i++) {
+    for (i = 0; i < (g_GraphTraceLen - 2048); i++) {
         for (j = 0; j < ARRAYLEN(SyncPattern); j++) {
-            sum += GraphBuffer[i + j] * SyncPattern[j];
+            sum += g_GraphBuffer[i + j] * SyncPattern[j];
         }
         if (sum > bestCorrel) {
             bestCorrel = sum;
@@ -1293,7 +1293,7 @@ int CmdVchDemod(const char *Cmd) {
     for (i = 0; i < 2048; i += 8) {
         sum = 0;
         for (j = 0; j < 8; j++)
-            sum += GraphBuffer[bestPos + i + j];
+            sum += g_GraphBuffer[bestPos + i + j];
 
         if (sum < 0)
             bits[i / 8] = '.';
@@ -1311,11 +1311,11 @@ int CmdVchDemod(const char *Cmd) {
 
     // clone
     if (strcmp(Cmd, "clone") == 0) {
-        GraphTraceLen = 0;
+        g_GraphTraceLen = 0;
         char *s;
         for (s = bits; *s; s++) {
             for (j = 0; j < 16; j++) {
-                GraphBuffer[GraphTraceLen++] = (*s == '1') ? 1 : 0;
+                g_GraphBuffer[g_GraphTraceLen++] = (*s == '1') ? 1 : 0;
             }
         }
         RepaintGraphWindow();
@@ -1350,6 +1350,7 @@ static bool CheckChipType(bool getDeviceData) {
         goto out;
     }
 
+#if !defined ICOPYX
     // check for em4x50 chips
     if (detect_4x50_block()) {
         PrintAndLogEx(SUCCESS, "Chipset detection: " _GREEN_("EM4x50"));
@@ -1365,6 +1366,7 @@ static bool CheckChipType(bool getDeviceData) {
         retval = true;
         goto out;
     }
+#endif
 
     PrintAndLogEx(INFO, "Couldn't identify a chipset");
 out:
@@ -1379,9 +1381,9 @@ int CmdLFfind(const char *Cmd) {
     CLIParserInit(&ctx, "lf search",
                   "Read and search for valid known tag. For offline mode, you can `data load` first then search.",
                   "lf search       -> try reading data from tag & search for known tag\n"
-                  "lf search -1    -> use data from GraphBuffer & search for known tag\n"
+                  "lf search -1    -> use data from the GraphBuffer & search for known tag\n"
                   "lf search -u    -> try reading data from tag & search for known and unknown tag\n"
-                  "lf search -1u   -> use data from GraphBuffer & search for known and unknown tag\n"
+                  "lf search -1u   -> use data from the GraphBuffer & search for known and unknown tag\n"
                  );
 
     void *argtable[] = {
@@ -1397,12 +1399,12 @@ int CmdLFfind(const char *Cmd) {
     bool search_unk = arg_get_lit(ctx, 3);
     CLIParserFree(ctx);
     int found = 0;
-    bool is_online = (session.pm3_present && (use_gb == false));
+    bool is_online = (g_session.pm3_present && (use_gb == false));
     if (is_online)
         lf_read(false, 30000);
 
     size_t min_length = 2000;
-    if (GraphTraceLen < min_length) {
+    if (g_GraphTraceLen < min_length) {
         PrintAndLogEx(FAILED, "Data in Graphbuffer was too small.");
         return PM3_ESOFT;
     }
@@ -1433,6 +1435,7 @@ int CmdLFfind(const char *Cmd) {
             }
         }
 
+#if !defined ICOPYX
         if (IfPm3EM4x50()) {
             if (read_em4x50_uid() == PM3_SUCCESS) {
                 PrintAndLogEx(SUCCESS, "\nValid " _GREEN_("EM4x50 ID") " found!");
@@ -1443,6 +1446,7 @@ int CmdLFfind(const char *Cmd) {
                 }
             }
         }
+#endif
 
         // only run if graphbuffer is just noise as it should be for hitag
         // The improved noise detection will find Cotag.
@@ -1690,7 +1694,7 @@ int CmdLFfind(const char *Cmd) {
     if (search_unk) {
         //test unknown tag formats (raw mode)
         PrintAndLogEx(INFO, "\nChecking for unknown tags:\n");
-        int ans = AutoCorrelate(GraphBuffer, GraphBuffer, GraphTraceLen, 8000, false, false);
+        int ans = AutoCorrelate(g_GraphBuffer, g_GraphBuffer, g_GraphTraceLen, 8000, false, false);
         if (ans > 0) {
 
             PrintAndLogEx(INFO, "Possible auto correlation of %d repeating samples", ans);

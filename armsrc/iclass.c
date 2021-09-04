@@ -315,9 +315,9 @@ int do_iclass_simulation(int simulationMode, uint8_t *reader_mac_buf) {
     uint8_t current_page = 0;
 
     // maintain cipher states for both credit and debit key for each page
-    State cipher_state_KD[8];
-    State cipher_state_KC[8];
-    State *cipher_state = &cipher_state_KD[0];
+    State_t cipher_state_KD[8];
+    State_t cipher_state_KC[8];
+    State_t *cipher_state = &cipher_state_KD[0];
 
     uint8_t *emulator = BigBuf_get_EM_addr();
     uint8_t *csn = emulator;
@@ -706,7 +706,7 @@ int do_iclass_simulation(int simulationMode, uint8_t *reader_mac_buf) {
 
                 if (simulationMode == ICLASS_SIM_MODE_EXIT_AFTER_MAC) {
 
-                    if (DBGLEVEL ==  DBG_EXTENDED) {
+                    if (g_dbglevel ==  DBG_EXTENDED) {
                         Dbprintf("CSN: %02x %02x %02x %02x %02x %02x %02x %02x", csn[0], csn[1], csn[2], csn[3], csn[4], csn[5], csn[6], csn[7]);
                         Dbprintf("RDR:  (len=%02d): %02x %02x %02x %02x %02x %02x %02x %02x %02x", len,
                                  receivedCmd[0], receivedCmd[1], receivedCmd[2],
@@ -864,7 +864,7 @@ int do_iclass_simulation(int simulationMode, uint8_t *reader_mac_buf) {
             // standard ISO15693 INVENTORY command. Ignore.
         } else {
             // Never seen this command before
-            if (DBGLEVEL >= DBG_EXTENDED)
+            if (g_dbglevel >= DBG_EXTENDED)
                 print_result("Unhandled command received ", receivedCmd, len);
         }
 
@@ -1217,7 +1217,7 @@ int do_iclass_simulation_nonsec(void) {
             // standard ISO15693 INVENTORY command. Ignore.
         } else {
             // Never seen this command before
-            if (DBGLEVEL >= DBG_EXTENDED)
+            if (g_dbglevel >= DBG_EXTENDED)
                 print_result("Unhandled command received ", receivedCmd, len);
         }
 

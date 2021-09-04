@@ -836,23 +836,23 @@ static int CmdConnect(const char *Cmd) {
 
     // default back to previous used serial port
     if (strlen(port) == 0) {
-        if (strlen(conn.serial_port_name) == 0) {
+        if (strlen(g_conn.serial_port_name) == 0) {
             PrintAndLogEx(WARNING, "Must specify a serial port");
             return PM3_EINVARG;
         }
-        memcpy(port, conn.serial_port_name, sizeof(port));
+        memcpy(port, g_conn.serial_port_name, sizeof(port));
     }
 
-    if (session.pm3_present) {
-        CloseProxmark(session.current_device);
+    if (g_session.pm3_present) {
+        CloseProxmark(g_session.current_device);
     }
 
     // 10 second timeout
-    OpenProxmark(&session.current_device, port, false, 10, false, baudrate);
+    OpenProxmark(&g_session.current_device, port, false, 10, false, baudrate);
 
-    if (session.pm3_present && (TestProxmark(session.current_device) != PM3_SUCCESS)) {
+    if (g_session.pm3_present && (TestProxmark(g_session.current_device) != PM3_SUCCESS)) {
         PrintAndLogEx(ERR, _RED_("ERROR:") " cannot communicate with the Proxmark3\n");
-        CloseProxmark(session.current_device);
+        CloseProxmark(g_session.current_device);
         return PM3_ENOTTY;
     }
     return PM3_SUCCESS;
@@ -970,7 +970,7 @@ void pm3_version(bool verbose, bool oneliner) {
     if (oneliner) {
         // For "proxmark3 -v", simple printf, avoid logging
         char temp[PM3_CMD_DATA_SIZE - 12]; // same limit as for ARM image
-        FormatVersionInformation(temp, sizeof(temp), "Client: ", &version_information);
+        FormatVersionInformation(temp, sizeof(temp), "Client: ", &g_version_information);
         PrintAndLogEx(NORMAL, "%s compiled with " PM3CLIENTCOMPILER __VERSION__ PM3HOSTOS PM3HOSTARCH "\n", temp);
         return;
     }
@@ -986,7 +986,7 @@ void pm3_version(bool verbose, bool oneliner) {
         char temp[PM3_CMD_DATA_SIZE - 12]; // same limit as for ARM image
         PrintAndLogEx(NORMAL, "\n [ " _CYAN_("Proxmark3 RFID instrument") " ]");
         PrintAndLogEx(NORMAL, "\n [ " _YELLOW_("CLIENT") " ]");
-        FormatVersionInformation(temp, sizeof(temp), "  client: ", &version_information);
+        FormatVersionInformation(temp, sizeof(temp), "  client: ", &g_version_information);
         PrintAndLogEx(NORMAL, "%s", temp);
         PrintAndLogEx(NORMAL, "  compiled with " PM3CLIENTCOMPILER __VERSION__ PM3HOSTOS PM3HOSTARCH);
 

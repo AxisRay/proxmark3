@@ -28,7 +28,6 @@
 #include "iso7816/apduinfo.h"   // APDU manipulation / errorcodes
 #include "iso7816/iso7816core.h"    // APDU logging
 #include "util_posix.h"     // msleep
-#include "mifare/desfire_crypto.h"
 #include "mifare/desfirecore.h"
 #include "mifare/desfiretest.h"
 #include "mifare/desfiresecurechan.h"
@@ -37,6 +36,7 @@
 #include "fileutils.h"
 #include "nfc/ndef.h"           // NDEF
 #include "mifare/mad.h"
+#include "mifare/mifaredefault.h"
 #include "generator.h"
 #include "mifare/aiddesfire.h"
 #include "util.h"
@@ -45,35 +45,21 @@
 #define MAX_KEYS_LIST_LEN  1024
 
 #define status(x) ( ((uint16_t)(0x91<<8)) + (uint16_t)x )
-
-#ifndef DropFieldDesfire
-#define DropFieldDesfire() { \
-        clearCommandBuffer(); \
-        SendCommandNG(CMD_HF_DROPFIELD, NULL, 0); \
-        tag->rf_field_on = false; \
-        PrintAndLogEx(DEBUG, "field dropped"); \
-    }
-#endif
-
-struct desfire_key default_key = {0};
-
-uint8_t desdefaultkeys[3][8] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, //Official
+/*
+static uint8_t desdefaultkeys[3][8] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, //Official
     {0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47},
     {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}
 };
 
-uint8_t aesdefaultkeys[5][16] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, //Official, TRF7970A
+static uint8_t aesdefaultkeys[5][16] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, //Official, TRF7970A
     {0x79, 0x70, 0x25, 0x53, 0x79, 0x70, 0x25, 0x53, 0x79, 0x70, 0x25, 0x53, 0x79, 0x70, 0x25, 0x53}, // TRF7970A
     {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}, // TRF7970A
     {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f},
     {0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f}
 };
 
-uint8_t k3kdefaultkeys[1][24] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
-
-struct desfire_tag mf_state = {.session_key = NULL, .authentication_scheme = AS_LEGACY, .authenticated_key_no = NOT_YET_AUTHENTICATED, .crypto_buffer = NULL, .crypto_buffer_size = 0, .selected_application = 0};
-static desfiretag_t tag = &mf_state;
-
+static uint8_t k3kdefaultkeys[1][24] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
+*/
 typedef struct mfdes_authinput {
     uint8_t mode;
     uint8_t algo;
@@ -84,8 +70,6 @@ typedef struct mfdes_authinput {
     uint8_t kdfInputLen;
     uint8_t kdfInput[31];
 } PACKED mfdes_authinput_t;
-
-static mfdes_authinput_t currentauth[0xF] = {{.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}, {.keyno = -1}};
 
 typedef struct mfdes_auth_res {
     uint8_t sessionkeylen;
@@ -173,6 +157,27 @@ typedef struct aidhdr {
 
 static int CmdHelp(const char *Cmd);
 
+static int CLIGetUint32Hex(CLIParserContext *ctx, uint8_t paramnum, uint32_t defaultValue, uint32_t *value, bool *valuePresent, uint8_t nlen, const char *lengthErrorStr) {
+    *value = defaultValue;
+    if (valuePresent != NULL)
+        *valuePresent = false;
+
+    int res = arg_get_u32_hexstr_def_nlen(ctx, paramnum, defaultValue, value, nlen, true);
+
+    if (valuePresent != NULL)
+        *valuePresent = (res == 1);
+
+    if (res == 2) {
+        PrintAndLogEx(ERR, lengthErrorStr);
+        return PM3_EINVARG;
+    }
+    if (res == 0) {
+        return PM3_EINVARG;
+    }
+
+    return PM3_SUCCESS;
+}
+
 /*
   The 7 MSBits (= n) code the storage size itself based on 2^n,
   the LSBit is set to '0' if the size is exactly 2^n
@@ -239,137 +244,6 @@ static char *getVersionStr(uint8_t major, uint8_t minor) {
 //04 01 01 01 00 1A 05
 }
 
-static int DESFIRESendApdu(bool activate_field, bool leavefield_on, sAPDU apdu, uint8_t *result, uint32_t max_result_len, uint32_t *result_len, uint16_t *sw) {
-
-    *result_len = 0;
-    if (sw) *sw = 0;
-
-    uint16_t isw = 0;
-    int res = 0;
-
-    if (activate_field) {
-        DropFieldDesfire();
-        msleep(50);
-    }
-
-    // select?
-    uint8_t data[APDU_RES_LEN] = {0};
-
-    // COMPUTE APDU
-    int datalen = 0;
-    //if (APDUEncodeS(&apdu, false, IncludeLe ? 0x100 : 0x00, data, &datalen)) {
-    if (APDUEncodeS(&apdu, false, 0x100, data, &datalen)) {
-        PrintAndLogEx(ERR, "APDU encoding error.");
-        return PM3_EAPDU_ENCODEFAIL;
-    }
-
-    if (GetAPDULogging() || (g_debugMode > 1))
-        PrintAndLogEx(SUCCESS, ">>>> %s", sprint_hex(data, datalen));
-
-    res = ExchangeAPDU14a(data, datalen, activate_field, leavefield_on, result, max_result_len, (int *)result_len);
-    if (res != PM3_SUCCESS) {
-        return res;
-    }
-
-    if (activate_field) {
-        PrintAndLogEx(DEBUG, "field up");
-        tag->rf_field_on = true;
-    }
-
-    if (GetAPDULogging() || (g_debugMode > 1))
-        PrintAndLogEx(SUCCESS, "<<<< %s", sprint_hex(result, *result_len));
-
-    if (*result_len < 2) {
-        return PM3_SUCCESS;
-    }
-
-    *result_len -= 2;
-    isw = (result[*result_len] << 8) + result[*result_len + 1];
-    if (sw)
-        *sw = isw;
-
-    if (isw != 0x9000 && isw != status(MFDES_S_OPERATION_OK) && isw != status(MFDES_S_SIGNATURE) && isw != status(MFDES_S_ADDITIONAL_FRAME) && isw != status(MFDES_S_NO_CHANGES)) {
-        if (GetAPDULogging()) {
-            if (isw >> 8 == 0x61) {
-                PrintAndLogEx(ERR, "APDU chaining len: 0x%02x -->", isw & 0xff);
-            } else {
-                PrintAndLogEx(ERR, "APDU(%02x%02x) ERROR: [0x%4X] %s", apdu.CLA, apdu.INS, isw, GetAPDUCodeDescription(isw >> 8, isw & 0xff));
-                return PM3_EAPDU_FAIL;
-            }
-        }
-        return PM3_EAPDU_FAIL;
-    }
-    return PM3_SUCCESS;
-}
-
-static int send_desfire_cmd(sAPDU *apdu, bool select, uint8_t *dest, uint32_t *recv_len, uint16_t *sw, uint32_t splitbysize, bool readalldata) {
-    if (apdu == NULL) {
-        PrintAndLogEx(DEBUG, "APDU=NULL");
-        return PM3_EINVARG;
-    }
-    if (sw == NULL) {
-        PrintAndLogEx(DEBUG, "SW=NULL");
-        return PM3_EINVARG;
-    }
-    if (recv_len == NULL) {
-        PrintAndLogEx(DEBUG, "RECV_LEN=NULL");
-        return PM3_EINVARG;
-    }
-
-    *sw = 0;
-    uint8_t data[255 * 5]  = {0x00};
-    uint32_t resplen = 0;
-    uint32_t pos = 0;
-    uint32_t i = 1;
-    int res = DESFIRESendApdu(select, true, *apdu, data, sizeof(data), &resplen, sw);
-    if (res != PM3_SUCCESS) {
-        PrintAndLogEx(DEBUG, "%s", DesfireGetErrorString(res, sw));
-        DropFieldDesfire();
-        return res;
-    }
-    if (dest != NULL) {
-        memcpy(dest, data, resplen);
-    }
-
-    pos += resplen;
-    if (!readalldata) {
-        if (*sw == status(MFDES_ADDITIONAL_FRAME)) {
-            *recv_len = pos;
-            return PM3_SUCCESS;
-        }
-        return res;
-    }
-
-    while (*sw == status(MFDES_ADDITIONAL_FRAME)) {
-        apdu->INS = MFDES_ADDITIONAL_FRAME; //0xAF
-        apdu->Lc = 0;
-        apdu->P1 = 0;
-        apdu->P2 = 0;
-
-        res = DESFIRESendApdu(false, true, *apdu, data, sizeof(data), &resplen, sw);
-        if (res != PM3_SUCCESS) {
-            PrintAndLogEx(DEBUG, "%s", DesfireGetErrorString(res, sw));
-            DropFieldDesfire();
-            return res;
-        }
-
-        if (dest != NULL) {
-            if (splitbysize) {
-                memcpy(&dest[i * splitbysize], data, resplen);
-                i += 1;
-            } else {
-                memcpy(&dest[pos], data, resplen);
-            }
-        }
-        pos += resplen;
-
-        if (*sw != status(MFDES_ADDITIONAL_FRAME)) break;
-    }
-
-    *recv_len = (splitbysize) ? i : pos;
-    return PM3_SUCCESS;
-}
-
 static nxp_cardtype_t getCardType(uint8_t major, uint8_t minor) {
 
     if (major == 0x00)
@@ -395,7 +269,7 @@ static int mfdes_get_info(mfdes_info_res_t *info) {
 
     if (WaitForResponseTimeout(CMD_HF_DESFIRE_INFO, &resp, 1500) == false) {
         PrintAndLogEx(WARNING, "Command execute timeout");
-        DropFieldDesfire();
+        DropField();
         return PM3_ETIMEOUT;
     }
 
@@ -419,531 +293,6 @@ static int mfdes_get_info(mfdes_info_res_t *info) {
 
     return PM3_SUCCESS;
 }
-
-static int handler_desfire_auth(mfdes_authinput_t *payload, mfdes_auth_res_t *rpayload) {
-    // 3 different way to authenticate   AUTH (CRC16) , AUTH_ISO (CRC32) , AUTH_AES (CRC32)
-    // 4 different crypto arg1   DES, 3DES, 3K3DES, AES
-    // 3 different communication modes,  PLAIN,MAC,CRYPTO
-    tag->authenticated_key_no = NOT_YET_AUTHENTICATED;
-    tag->session_key = NULL;
-
-    mbedtls_aes_context ctx;
-
-    uint8_t keybytes[24];
-    // Crypt constants
-    uint8_t IV[16] = {0x00};
-    uint8_t RndA[16] = {0x00};
-    uint8_t RndB[16] = {0x00};
-    uint8_t encRndB[16] = {0x00};
-    uint8_t rotRndB[16] = {0x00}; //RndB'
-    uint8_t both[32 + 1] = {0x00}; // ek/dk_keyNo(RndA+RndB')
-
-    // Generate Random Value
-    uint32_t ng = msclock();
-    uint32_t value = prng_successor(ng, 32);
-    num_to_bytes(value, 4, &RndA[0]);
-    value = prng_successor(ng, 32);
-    num_to_bytes(value, 4, &RndA[4]);
-    value = prng_successor(ng, 32);
-    num_to_bytes(value, 4, &RndA[8]);
-    value = prng_successor(ng, 32);
-    num_to_bytes(value, 4, &RndA[12]);
-
-    // Part 1
-    memcpy(keybytes, payload->key, payload->keylen);
-
-    struct desfire_key dkey = {0};
-    desfirekey_t key = &dkey;
-
-    if (payload->algo == MFDES_ALGO_AES) {
-        mbedtls_aes_init(&ctx);
-        Desfire_aes_key_new(keybytes, key);
-    } else if (payload->algo == MFDES_ALGO_3DES) {
-        Desfire_3des_key_new_with_version(keybytes, key);
-    } else if (payload->algo == MFDES_ALGO_DES) {
-        Desfire_des_key_new(keybytes, key);
-    } else if (payload->algo == MFDES_ALGO_3K3DES) {
-        Desfire_3k3des_key_new_with_version(keybytes, key);
-    }
-
-    if (payload->kdfAlgo == MFDES_KDF_ALGO_AN10922) {
-        mifare_kdf_an10922(key, payload->kdfInput, payload->kdfInputLen);
-        PrintAndLogEx(DEBUG, " Derrived key: " _GREEN_("%s"), sprint_hex(key->data, key_block_size(key)));
-    } else if (payload->kdfAlgo == MFDES_KDF_ALGO_GALLAGHER) {
-        // We will overrite any provided KDF input since a gallagher specific KDF was requested.
-        payload->kdfInputLen = 11;
-
-        if (mfdes_kdf_input_gallagher(tag->info.uid, tag->info.uidlen, payload->keyno, tag->selected_application, payload->kdfInput, &payload->kdfInputLen) != PM3_SUCCESS) {
-            PrintAndLogEx(FAILED, "Could not generate Gallagher KDF input");
-        }
-
-        mifare_kdf_an10922(key, payload->kdfInput, payload->kdfInputLen);
-        PrintAndLogEx(DEBUG, "    KDF Input: " _YELLOW_("%s"), sprint_hex(payload->kdfInput, payload->kdfInputLen));
-        PrintAndLogEx(DEBUG, " Derrived key: " _GREEN_("%s"), sprint_hex(key->data, key_block_size(key)));
-
-    }
-
-    uint8_t subcommand = MFDES_AUTHENTICATE;
-    tag->authentication_scheme = AS_LEGACY;
-
-    if (payload->mode == MFDES_AUTH_AES) {
-        subcommand = MFDES_AUTHENTICATE_AES;
-        tag->authentication_scheme = AS_NEW;
-    } else if (payload->mode == MFDES_AUTH_ISO) {
-        subcommand = MFDES_AUTHENTICATE_ISO;
-        tag->authentication_scheme = AS_NEW;
-    }
-
-    uint32_t recv_len = 0;
-    uint16_t sw = 0;
-    uint8_t recv_data[256] = {0};
-
-    if (payload->mode != MFDES_AUTH_PICC) {
-        // Let's send our auth command
-        uint8_t data[] = {payload->keyno};
-        sAPDU apdu = {0x90, subcommand, 0x00, 0x00, 0x01, data};
-        int res = send_desfire_cmd(&apdu, false, recv_data, &recv_len, &sw, 0, false);
-        if (res != PM3_SUCCESS) {
-            return 1;
-        }
-    }
-    // else {
-    /*
-    cmd[0] = AUTHENTICATE;
-    cmd[1] = payload->keyno;
-    len = DesfireAPDU(cmd, 2, resp);
-    */
-    //}
-
-    if (!recv_len) {
-        return 2;
-    }
-
-    if (sw != status(MFDES_ADDITIONAL_FRAME)) {
-        return 3;
-    }
-
-    uint32_t expectedlen = 8;
-    if (payload->algo == MFDES_ALGO_AES || payload->algo == MFDES_ALGO_3K3DES) {
-        expectedlen = 16;
-    }
-
-    if (recv_len != expectedlen) {
-        return 4;
-    }
-    uint32_t rndlen = recv_len;
-
-    // Part 2
-    if (payload->mode != MFDES_AUTH_PICC) {
-        memcpy(encRndB, recv_data, rndlen);
-    } else {
-        memcpy(encRndB, recv_data + 2, rndlen);
-    }
-
-    // Part 3
-    if (payload->algo == MFDES_ALGO_AES) {
-        if (mbedtls_aes_setkey_dec(&ctx, key->data, 128) != 0) {
-            return 5;
-        }
-        mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_DECRYPT, rndlen, IV, encRndB, RndB);
-    } else if (payload->algo == MFDES_ALGO_DES)
-        des_decrypt(RndB, encRndB, key->data);
-    else if (payload->algo == MFDES_ALGO_3DES)
-        tdes_nxp_receive(encRndB, RndB, rndlen, key->data, IV, 2);
-    else if (payload->algo == MFDES_ALGO_3K3DES) {
-        tdes_nxp_receive(encRndB, RndB, rndlen, key->data, IV, 3);
-    }
-
-    if (g_debugMode > 1) {
-        PrintAndLogEx(DEBUG, "encRndB: %s", sprint_hex(encRndB, 8));
-        PrintAndLogEx(DEBUG, "RndB: %s", sprint_hex(RndB, 8));
-    }
-
-    // - Rotate RndB by 8 bits
-    memcpy(rotRndB, RndB, rndlen);
-    rol(rotRndB, rndlen);
-
-    uint8_t encRndA[16] = {0x00};
-
-    // - Encrypt our response
-    if (payload->mode == MFDES_AUTH_DES || payload->mode == MFDES_AUTH_PICC) {
-        des_decrypt(encRndA, RndA, key->data);
-        memcpy(both, encRndA, rndlen);
-
-        for (uint32_t x = 0; x < rndlen; x++) {
-            rotRndB[x] = rotRndB[x] ^ encRndA[x];
-        }
-
-        des_decrypt(encRndB, rotRndB, key->data);
-        memcpy(both + rndlen, encRndB, rndlen);
-    } else if (payload->mode == MFDES_AUTH_ISO) {
-        if (payload->algo == MFDES_ALGO_3DES) {
-            uint8_t tmp[16] = {0x00};
-            memcpy(tmp, RndA, rndlen);
-            memcpy(tmp + rndlen, rotRndB, rndlen);
-            if (g_debugMode > 1) {
-                PrintAndLogEx(DEBUG, "rotRndB: %s", sprint_hex(rotRndB, rndlen));
-                PrintAndLogEx(DEBUG, "Both: %s", sprint_hex(tmp, 16));
-            }
-            tdes_nxp_send(tmp, both, 16, key->data, IV, 2);
-            if (g_debugMode > 1) {
-                PrintAndLogEx(DEBUG, "EncBoth: %s", sprint_hex(both, 16));
-            }
-        } else if (payload->algo == MFDES_ALGO_3K3DES) {
-            uint8_t tmp[32] = {0x00};
-            memcpy(tmp, RndA, rndlen);
-            memcpy(tmp + rndlen, rotRndB, rndlen);
-            if (g_debugMode > 1) {
-                PrintAndLogEx(DEBUG, "rotRndB: %s", sprint_hex(rotRndB, rndlen));
-                PrintAndLogEx(DEBUG, "Both3k3: %s", sprint_hex(tmp, 32));
-            }
-            tdes_nxp_send(tmp, both, 32, key->data, IV, 3);
-            if (g_debugMode > 1) {
-                PrintAndLogEx(DEBUG, "EncBoth: %s", sprint_hex(both, 32));
-            }
-        }
-    } else if (payload->mode == MFDES_AUTH_AES) {
-        uint8_t tmp[32] = {0x00};
-        memcpy(tmp, RndA, rndlen);
-        memcpy(tmp + rndlen, rotRndB, rndlen);
-        if (g_debugMode > 1) {
-            PrintAndLogEx(DEBUG, "rotRndB: %s", sprint_hex(rotRndB, rndlen));
-            PrintAndLogEx(DEBUG, "Both3k3: %s", sprint_hex(tmp, 32));
-        }
-        if (payload->algo == MFDES_ALGO_AES) {
-            if (mbedtls_aes_setkey_enc(&ctx, key->data, 128) != 0) {
-                return 6;
-            }
-            mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_ENCRYPT, 32, IV, tmp, both);
-            if (g_debugMode > 1) {
-                PrintAndLogEx(DEBUG, "EncBoth: %s", sprint_hex(both, 32));
-            }
-        }
-    }
-
-    uint32_t bothlen = 16;
-    if (payload->algo == MFDES_ALGO_AES || payload->algo == MFDES_ALGO_3K3DES) {
-        bothlen = 32;
-    }
-    if (payload->mode != MFDES_AUTH_PICC) {
-        sAPDU apdu = {0x90, MFDES_ADDITIONAL_FRAME, 0x00, 0x00, bothlen, both};
-        int res = send_desfire_cmd(&apdu, false, recv_data, &recv_len, &sw, 0, false);
-        if (res != PM3_SUCCESS) {
-            return 7;
-        }
-    } else {
-        /*cmd[0] = ADDITIONAL_FRAME;
-        memcpy(cmd + 1, both, 16);
-        len = DesfireAPDU(cmd, 1 + 16, resp);
-
-        if (res != PM3_SUCCESS) {
-            PrintAndLogEx(SUCCESS, "Sending auth command %02X " _RED_("failed"),subcommand);
-            return PM3_ESOFT;
-        }*/
-    }
-
-    if (!recv_len) {
-        return 8;
-    }
-
-    if (payload->mode != MFDES_AUTH_PICC) {
-        if (sw != status(MFDES_S_OPERATION_OK)) {
-            return 9;
-        }
-    } else {
-        /*if (resp[1] != 0x00) {
-            PrintAndLogEx(ERR,"Authentication failed. Card timeout.");
-            return PM3_ESOFT;
-        }*/
-    }
-
-    // Part 4
-    // tag->session_key = &default_key;
-    struct desfire_key *p = realloc(tag->session_key, sizeof(struct desfire_key));
-    if (!p) {
-        PrintAndLogEx(FAILED, "Cannot allocate memory for session keys");
-        free(tag->session_key);
-        return PM3_EMALLOC;
-    }
-    tag->session_key = p;
-
-    memset(tag->session_key, 0x00, sizeof(struct desfire_key));
-
-    Desfire_session_key_new(RndA, RndB, key, tag->session_key);
-
-    if (payload->mode != MFDES_AUTH_PICC) {
-        memcpy(encRndA, recv_data, rndlen);
-    } else {
-        memcpy(encRndA, recv_data + 2, rndlen);
-    }
-
-    if (payload->mode == MFDES_AUTH_DES || payload->mode == MFDES_AUTH_ISO || payload->mode == MFDES_AUTH_PICC) {
-        if (payload->algo == MFDES_ALGO_DES)
-            des_decrypt(encRndA, encRndA, key->data);
-        else if (payload->algo == MFDES_ALGO_3DES)
-            tdes_nxp_receive(encRndA, encRndA, rndlen, key->data, IV, 2);
-        else if (payload->algo == MFDES_ALGO_3K3DES)
-            tdes_nxp_receive(encRndA, encRndA, rndlen, key->data, IV, 3);
-    } else if (payload->mode == MFDES_AUTH_AES) {
-        if (mbedtls_aes_setkey_dec(&ctx, key->data, 128) != 0) {
-            return 10;
-        }
-        mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_DECRYPT, rndlen, IV, encRndA, encRndA);
-    }
-
-    rol(RndA, rndlen);
-    for (uint32_t x = 0; x < rndlen; x++) {
-        if (RndA[x] != encRndA[x]) {
-            if (g_debugMode > 1) {
-                PrintAndLogEx(DEBUG, "Expected_RndA : %s", sprint_hex(RndA, rndlen));
-                PrintAndLogEx(DEBUG, "Generated_RndA : %s", sprint_hex(encRndA, rndlen));
-            }
-            return 11;
-        }
-    }
-
-    // If the 3Des key first 8 bytes = 2nd 8 Bytes then we are really using Singe Des
-    // As such we need to set the session key such that the 2nd 8 bytes = 1st 8 Bytes
-    if (payload->algo == MFDES_ALGO_3DES) {
-        if (memcmp(key->data, &key->data[8], 8) == 0)
-            memcpy(&tag->session_key->data[8], tag->session_key->data, 8);
-    }
-
-    rpayload->sessionkeylen = payload->keylen;
-    memcpy(rpayload->sessionkey, tag->session_key->data, rpayload->sessionkeylen);
-    memset(tag->ivect, 0, MAX_CRYPTO_BLOCK_SIZE);
-    tag->authenticated_key_no = payload->keyno;
-
-    if (tag->authentication_scheme == AS_NEW) {
-        cmac_generate_subkeys(tag->session_key, MCD_RECEIVE);
-    }
-    return PM3_SUCCESS;
-}
-
-/*static int mifare_desfire_change_key(uint8_t key_no, uint8_t *new_key, uint8_t new_algo, uint8_t *old_key, uint8_t old_algo, uint8_t aes_version) {
-
-    if (new_key == NULL || old_key == NULL) {
-        return PM3_EINVARG;
-    }
-
-    // AID == 000000  6bits LSB needs to be 0
-    key_no &= 0x0F;
-
-
-        Desfire treats Des keys as TDes but with the first half = 2nd half
-        As such, we should be able to convert the Des to TDes then run the code as TDes
-
-    if (new_algo == MFDES_ALGO_DES) {
-        memcpy(&new_key[8], new_key, 8);
-        new_algo = MFDES_ALGO_3DES;
-    }
-
-    if (old_algo == MFDES_ALGO_DES) {
-        memcpy(&old_key[8], old_key, 8);
-        old_algo = MFDES_ALGO_3DES;
-    }
-
-    *
-     * Because new crypto methods can be setup only at application creation,
-     * changing the card master key to one of them require a key_no tweak.
-     *
-    if (0x000000 == tag->selected_application) {
-
-        // PICC master key, 6bits LSB needs to be 0
-        key_no = 0x00;
-
-        // PICC master key, keyalgo specific 2bit MSB
-        switch (new_algo) {
-            // case MFDES_ALGO_DES: // not needed as we patched des to 3des above. (coverty deadcode)
-            case MFDES_ALGO_3DES:
-                break;            // 00xx xxx
-            case MFDES_ALGO_3K3DES:
-                key_no |= 0x40;   // 01xx xxx
-                break;
-            case MFDES_ALGO_AES:
-                key_no |= 0x80;   // 10xx xxx
-                break;
-        }
-    }
-    *
-    keyno   1b
-    key     8b
-    cpy     8b
-    crc     2b
-    padding
-    *
-
-    // Variable length ciphered key data 24-42 bytes plus padding..
-    uint8_t data[64] = {key_no};
-    sAPDU apdu = {0x90, MFDES_CHANGE_KEY, 0x00, 0x00, 0x01, data}; // 0xC4
-
-    size_t cmdcnt = 0;
-    uint8_t csPkt[100] = {0x00}; // temp storage for AES/3K3Des packet to calculate checksum  (size ????)
-
-    uint8_t new_key_length = 16;
-    switch (new_algo) {
-        *
-                // We have converted the DES to 3DES above,so this will never hit
-                case MFDES_ALGO_DES:
-                    memcpy(data + cmdcnt + 1, new_key, new_key_length);
-                    memcpy(data + cmdcnt + 1 + new_key_length, new_key, new_key_length);
-                    break;
-        *
-        case MFDES_ALGO_3DES:
-        case MFDES_ALGO_AES:
-            new_key_length = 16;
-            memcpy(data + cmdcnt + 1, new_key, new_key_length);
-            break;
-        case MFDES_ALGO_3K3DES:
-            new_key_length = 24;
-            memcpy(data + cmdcnt + 1, new_key, new_key_length);
-            break;
-    }
-
-    if ((tag->authenticated_key_no & 0x0f) != (key_no & 0x0f)) {
-        if (old_key) {
-            for (uint32_t n = 0; n < new_key_length; n++) {
-                data[cmdcnt + 1 + n] ^= old_key[n];
-            }
-        }
-    }
-
-    cmdcnt += new_key_length;
-
-    if (new_algo == MFDES_ALGO_AES) {
-        data[cmdcnt + 1] = aes_version;
-        cmdcnt += 1;
-    }
-
-    if ((tag->authenticated_key_no & 0x0f) != (key_no & 0x0f)) {
-        switch (tag->authentication_scheme) {
-            case AS_LEGACY:
-                iso14443a_crc_append(data + 1, cmdcnt);
-                cmdcnt += 2;
-
-//              iso14443a_crc(new_key, new_key_length, data + cmdcnt);
-//              Add offset + 1 for key no. at start
-                iso14443a_crc(new_key, new_key_length, data + 1 + cmdcnt);
-                cmdcnt += 2;
-                break;
-            case AS_NEW:
-                if (new_algo == MFDES_ALGO_AES) {
-                    // AES Checksum must cover : C4<KeyNo>    <PrevKey XOR Newkey>          <NewKeyVer>
-                    //                           C4  01   A0B08090E0F0C0D02030001060704050      03
-                    // 19 bytes
-                    //uint8_t csPkt[30] = {0x00};
-                    csPkt[0] = MFDES_CHANGE_KEY;
-                    memcpy(&csPkt[1], data, 18);
-
-                    desfire_crc32(csPkt, 19, data + 1 + cmdcnt);
-                } else if (new_algo == MFDES_ALGO_3K3DES) {
-                    // 3K3Des checksum must cover : C4 <KeyNo> <PrevKey XOR NewKey>
-                    csPkt[0] = MFDES_CHANGE_KEY;
-                    memcpy(&csPkt[1], data, 25);
-                    desfire_crc32(csPkt, 26, data + 1 + cmdcnt);
-                } else {
-                    desfire_crc32_append(data + 1, cmdcnt);
-                }
-                cmdcnt += 4;
-
-                desfire_crc32(new_key, new_key_length, data + 1 + cmdcnt);
-                cmdcnt += 4;
-                break;
-        }
-    } else {
-        switch (tag->authentication_scheme) {
-            case AS_LEGACY:
-                iso14443a_crc_append(data + 1, cmdcnt);
-                cmdcnt += 2;
-                break;
-            case AS_NEW:
-                if (new_algo == MFDES_ALGO_AES) {
-                    // AES Checksum must cover : C4<KeyNo>    <Newkey data>                 <NewKeyVer>
-                    //                           C4  01   A0B08090E0F0C0D02030001060704050      03
-                    csPkt[0] = MFDES_CHANGE_KEY;
-                    memcpy(&csPkt[1], data, 18);
-                    desfire_crc32(csPkt, 19, data + 1 + cmdcnt);
-                } else if (new_algo == MFDES_ALGO_3K3DES) {
-                    // 3K3Des checksum must cover : C4 <KeyNo> <Newkey Data>
-                    csPkt[0] = MFDES_CHANGE_KEY;
-                    memcpy(&csPkt[1], data, 25);
-                    desfire_crc32(csPkt, 26, data + 1 + cmdcnt);
-                } else {
-                    desfire_crc32_append(data + 1, cmdcnt);
-                }
-                cmdcnt += 4;
-                //  desfire_crc32_append(data, cmdcnt);
-                //  cmdcnt += 4;
-                break;
-        }
-    }
-
-    uint8_t *p = mifare_cryto_preprocess_data(tag, data + 1, (size_t *)&cmdcnt, 0, MDCM_ENCIPHERED | ENC_COMMAND | NO_CRC);
-    apdu.Lc = (uint8_t)cmdcnt + 1;
-    // apdu.data = p;
-    // the above data pointed to from p did not have the key no. at the start, so copy preprocessed data after the key no.
-    memcpy(&data[1], p, cmdcnt);
-    apdu.data = data;
-
-    uint32_t recv_len = 0;
-    uint16_t sw = 0;
-
-    //  If we call send_desfire with 2nd option (turn field on), it will turn off then on
-    //  leading to loosing the authentication on the aid, so lets not turn on here.
-    //    int res = send_desfire_cmd(&apdu, true, NULL, &recv_len, &sw, 0, true);
-    int res = send_desfire_cmd(&apdu, false, NULL, &recv_len, &sw, 0, true);
-
-    if (res != PM3_SUCCESS) {
-        PrintAndLogEx(WARNING, _RED_("can't change key -> %s"), DesfireGetErrorString(res, &sw));
-        DropFieldDesfire();
-        return res;
-    }
-
-    size_t sn = recv_len;
-
-
-    if ((new_algo == MFDES_ALGO_AES) || (new_algo == MFDES_ALGO_3K3DES)) {
-        // AES expects us to Calculate CMAC for status byte : OK 0x00  (0x91 00)
-        // As such if we get this far without an error, we should be good
-        // Since we are dropping the field, we dont need to maintain the CMAC etc.
-        // Setting sn = 1 will allow the post process to just exit (as status only)
-
-        // Simular 3K3Des has some work to validate, but as long as the reply code was 00
-        // e.g. 02  fe  ec  77  ca  13  e0  c2  06  [91  00 (OK)]  69  67
-
-        sn = 1;
-    }
-
-    p = mifare_cryto_postprocess_data(tag, data, &sn, MDCM_PLAIN | CMAC_COMMAND | CMAC_VERIFY);
-
-    // Should be finished processing the changekey so lets ensure the field is dropped.
-    DropFieldDesfire();
-
-    if (!p) {
-        *
-            Note in my testing on an EV1, the AES password did change, with the number of returned bytes was 8, expected 9 <status><8 byte cmac>
-            As such !p is true and the code reports "Error on changing key"; so comment back to user until its fixed.
-
-            Note: as at 19 May 2021, with the sn = 1 patch above, this should no longer be reachable!
-        *
-        if (new_algo == MFDES_ALGO_AES) {
-            PrintAndLogEx(WARNING, "AES Key may have been changed, please check new password with the auth command.");
-        }
-
-        return PM3_ESOFT;
-    }
-
-    *
-     * If we changed the current authenticated key, we are not authenticated
-     * anymore.
-     *
-    if (key_no == tag->authenticated_key_no) {
-        free(tag->session_key);
-        tag->session_key = NULL;
-    }
-
-    return PM3_SUCCESS;
-}*/
 
 // --- GET SIGNATURE
 static int desfire_print_signature(uint8_t *uid, uint8_t uidlen, uint8_t *signature, size_t signature_len, nxp_cardtype_t card_type) {
@@ -1012,124 +361,6 @@ static int desfire_print_signature(uint8_t *uid, uint8_t uidlen, uint8_t *signat
     return PM3_SUCCESS;
 }
 
-static int handler_desfire_getkeysettings(uint8_t *key_settings, uint8_t *num_keys) {
-    if (key_settings == NULL) {
-        PrintAndLogEx(DEBUG, "KEY_SETTINGS=NULL");
-        return PM3_EINVARG;
-    }
-    if (num_keys == NULL) {
-        PrintAndLogEx(DEBUG, "NUM_KEYS=NULL");
-        return PM3_EINVARG;
-    }
-    sAPDU apdu = {0x90, MFDES_GET_KEY_SETTINGS, 0x00, 0x00, 0x00, NULL}; //0x45
-
-    uint32_t recv_len = 0;
-    uint16_t sw = 0;
-    uint8_t data[2] = {0};
-    int res = send_desfire_cmd(&apdu, false, data, &recv_len, &sw, 0, true);
-
-    if (res != PM3_SUCCESS)
-        return res;
-    if (sw != status(MFDES_S_OPERATION_OK))
-        return PM3_ESOFT;
-
-    *key_settings = data[0];
-    *num_keys = data[1];
-    return res;
-}
-
-// --- GET APPIDS
-static int handler_desfire_appids(uint8_t *dest, uint32_t *app_ids_len) {
-    if (dest == NULL) {
-        PrintAndLogEx(DEBUG, "DEST=NULL");
-        return PM3_EINVARG;
-    }
-    if (app_ids_len == NULL) {
-        PrintAndLogEx(DEBUG, "APP_IDS_LEN=NULL");
-        return PM3_EINVARG;
-    }
-
-    sAPDU apdu = {0x90, MFDES_GET_APPLICATION_IDS, 0x00, 0x00, 0x00, NULL}; //0x6a
-    uint32_t recv_len = 0;
-    uint16_t sw = 0;
-    int res = send_desfire_cmd(&apdu, true, dest, &recv_len, &sw, 0, true);
-
-    if (res != PM3_SUCCESS)
-        return res;
-
-    if (sw != status(MFDES_S_OPERATION_OK))
-        return PM3_ESOFT;
-
-    *app_ids_len = (uint8_t)(recv_len & 0xFF);
-    return res;
-}
-
-static int handler_desfire_select_application(uint8_t *aid) {
-    if (g_debugMode > 1) {
-        if (aid == NULL) {
-            PrintAndLogEx(ERR, "AID=NULL");
-        }
-    }
-    if (aid == NULL) {
-        return PM3_EINVARG;
-    }
-
-    sAPDU apdu = {0x90, MFDES_SELECT_APPLICATION, 0x00, 0x00, 0x03, aid}; //0x5a
-    uint32_t recv_len = 0;
-    uint16_t sw = 0;
-
-    int res = send_desfire_cmd(&apdu, !tag->rf_field_on, NULL, &recv_len, &sw, sizeof(dfname_t), true);
-    if (res != PM3_SUCCESS) {
-        PrintAndLogEx(WARNING,
-                      _RED_("   Can't select AID 0x%X -> %s"),
-                      (aid[2] << 16) + (aid[1] << 8) + aid[0],
-                      DesfireGetErrorString(res, &sw)
-                     );
-        DropFieldDesfire();
-        return res;
-    }
-    memcpy(&tag->selected_application, aid, 3);
-    return PM3_SUCCESS;
-}
-
-static int handler_desfire_fileids(uint8_t *dest, uint32_t *file_ids_len) {
-    if (g_debugMode > 1) {
-        if (dest == NULL) PrintAndLogEx(ERR, "DEST=NULL");
-        if (file_ids_len == NULL) PrintAndLogEx(ERR, "FILE_IDS_LEN=NULL");
-    }
-    if (dest == NULL || file_ids_len == NULL) return PM3_EINVARG;
-    sAPDU apdu = {0x90, MFDES_GET_FILE_IDS, 0x00, 0x00, 0x00, NULL}; //0x6f
-    uint32_t recv_len = 0;
-    uint16_t sw = 0;
-    *file_ids_len = 0;
-    int res = send_desfire_cmd(&apdu, false, dest, &recv_len, &sw, 0, true);
-    if (res != PM3_SUCCESS) {
-        PrintAndLogEx(WARNING, _RED_("   Can't get file ids -> %s"), DesfireGetErrorString(res, &sw));
-        DropFieldDesfire();
-        return res;
-    }
-    *file_ids_len = recv_len;
-    return res;
-}
-
-// none, verified
-static int handler_desfire_filesettings(uint8_t file_id, uint8_t *dest, uint32_t *destlen) {
-    if (g_debugMode > 1) {
-        if (dest == NULL) PrintAndLogEx(ERR, "DEST=NULL");
-        if (destlen == NULL) PrintAndLogEx(ERR, "DESTLEN=NULL");
-    }
-    if (dest == NULL || destlen == NULL) return PM3_EINVARG;
-    sAPDU apdu = {0x90, MFDES_GET_FILE_SETTINGS, 0x00, 0x00, 0x01, &file_id}; // 0xF5
-    uint16_t sw = 0;
-    int res = send_desfire_cmd(&apdu, false, dest, destlen, &sw, 0, true);
-    if (res != PM3_SUCCESS) {
-        PrintAndLogEx(WARNING, _RED_("   Can't get file settings -> %s"), DesfireGetErrorString(res, &sw));
-        DropFieldDesfire();
-        return res;
-    }
-    return res;
-}
-
 static void swap24(uint8_t *data) {
     if (data == NULL) return;
     uint8_t tmp = data[0];
@@ -1137,109 +368,180 @@ static void swap24(uint8_t *data) {
     data[2] = tmp;
 };
 
-static int desfire_authenticate(int cmdAuthMode, int cmdAuthAlgo, uint8_t *aid, uint8_t *key, int cmdKeyNo, uint8_t cmdKdfAlgo, uint8_t kdfInputLen, uint8_t *kdfInput, mfdes_auth_res_t *rpayload) {
-    switch (cmdAuthMode) {
-        case MFDES_AUTH_DES:
-            if (cmdAuthAlgo != MFDES_ALGO_DES && cmdAuthAlgo != MFDES_ALGO_3DES) {
-                PrintAndLogEx(NORMAL, "Crypto algo not valid for the auth des mode");
-                return PM3_EINVARG;
-            }
-            break;
-        case MFDES_AUTH_ISO:
-            if (cmdAuthAlgo != MFDES_ALGO_3DES && cmdAuthAlgo != MFDES_ALGO_3K3DES) {
-                PrintAndLogEx(NORMAL, "Crypto algo not valid for the auth iso mode");
-                return PM3_EINVARG;
-            }
-            break;
-        case MFDES_AUTH_AES:
-            if (cmdAuthAlgo != MFDES_ALGO_AES) {
-                PrintAndLogEx(NORMAL, "Crypto algo not valid for the auth aes mode");
-                return PM3_EINVARG;
-            }
-            break;
-        case MFDES_AUTH_PICC:
-            if (cmdAuthAlgo != MFDES_AUTH_DES) {
-                PrintAndLogEx(NORMAL, "Crypto algo not valid for the auth picc mode");
-                return PM3_EINVARG;
-            }
-            break;
-        default:
-            PrintAndLogEx(WARNING, "Wrong Auth mode (%d) -> (1=normal, 2=iso, 3=aes)", cmdAuthMode);
+// default parameters
+static uint8_t defaultKeyNum = 0;
+static enum DESFIRE_CRYPTOALGO defaultAlgoId = T_DES;
+static uint8_t defaultKey[DESFIRE_MAX_KEY_SIZE] = {0};
+static int defaultKdfAlgo = MFDES_KDF_ALGO_NONE;
+static int defaultKdfInputLen = 0;
+static uint8_t defaultKdfInput[50] = {0};
+static DesfireSecureChannel defaultSecureChannel = DACEV1;
+static DesfireCommandSet defaultCommSet = DCCNativeISO;
+static DesfireCommunicationMode defaultCommMode = DCMPlain;
+static uint32_t transactionCounter = 0;
+
+static int CmdDesGetSessionParameters(CLIParserContext *ctx, DesfireContext_t *dctx,
+                                      uint8_t keynoid, uint8_t algoid, uint8_t keyid,
+                                      uint8_t kdfid, uint8_t kdfiid,
+                                      uint8_t cmodeid, uint8_t ccsetid, uint8_t schannid,
+                                      uint8_t appid,
+                                      uint8_t appisoid,
+                                      int *securechannel,
+                                      DesfireCommunicationMode defcommmode,
+                                      uint32_t *id,
+                                      DesfireISOSelectWay *selectway) {
+
+    uint8_t keynum = defaultKeyNum;
+    int algores = defaultAlgoId;
+    uint8_t key[DESFIRE_MAX_KEY_SIZE] = {0};
+    memcpy(key, defaultKey, DESFIRE_MAX_KEY_SIZE);
+    int kdfAlgo = defaultKdfAlgo;
+    int kdfInputLen = defaultKdfInputLen;
+    uint8_t kdfInput[50] = {0};
+    memcpy(kdfInput, defaultKdfInput, defaultKdfInputLen);
+    int commmode = defaultCommMode;
+    if (defcommmode != DCMNone)
+        commmode = defcommmode;
+    int commset = defaultCommSet;
+    int secchann = defaultSecureChannel;
+
+    if (keynoid) {
+        keynum = arg_get_int_def(ctx, keynoid, keynum);
+    }
+
+    if (algoid) {
+        if (CLIGetOptionList(arg_get_str(ctx, algoid), DesfireAlgoOpts, &algores))
+            return PM3_ESOFT;
+    }
+
+    if (keyid) {
+        int keylen = 0;
+        uint8_t keydata[200] = {0};
+        if (CLIParamHexToBuf(arg_get_str(ctx, keyid), keydata, sizeof(keydata), &keylen))
+            return PM3_ESOFT;
+        if (keylen && keylen != desfire_get_key_length(algores)) {
+            PrintAndLogEx(ERR, "%s key must have %d bytes length instead of %d.", CLIGetOptionListStr(DesfireAlgoOpts, algores), desfire_get_key_length(algores), keylen);
             return PM3_EINVARG;
+        }
+        if (keylen)
+            memcpy(key, keydata, keylen);
     }
 
-    int keylength = 16;
-
-    switch (cmdAuthAlgo) {
-        case MFDES_ALGO_3DES:
-            keylength = 16;
-            break;
-        case MFDES_ALGO_3K3DES:
-            keylength = 24;
-            break;
-        case MFDES_ALGO_AES:
-            keylength = 16;
-            break;
-        default:
-            cmdAuthAlgo = MFDES_ALGO_DES;
-            keylength = 8;
-            break;
+    if (kdfid) {
+        if (CLIGetOptionList(arg_get_str(ctx, kdfid), DesfireKDFAlgoOpts, &kdfAlgo))
+            return PM3_ESOFT;
     }
 
-    switch (cmdKdfAlgo) {
-        case MFDES_KDF_ALGO_AN10922:
-            // TODO: 2TDEA and 3TDEA keys use an input length of 1-15 bytes
-            if (cmdAuthAlgo != MFDES_ALGO_AES) {
-                PrintAndLogEx(FAILED, "Crypto algo not valid for the KDF AN10922 algo.");
-                return PM3_EINVARG;
-            }
-            if (kdfInputLen < 1 || kdfInputLen > 31) {
-                PrintAndLogEx(FAILED, "KDF AN10922 algo requires an input of length 1-31 bytes.");
-                return PM3_EINVARG;
-            }
-            break;
-        case MFDES_KDF_ALGO_GALLAGHER:
-            // TODO: 2TDEA and 3TDEA keys use an input length of 1-15 bytes
-            if (cmdAuthAlgo != MFDES_ALGO_AES) {
-                PrintAndLogEx(FAILED, "Crypto algo not valid for the KDF AN10922 algo.");
-                return PM3_EINVARG;
-            }
-            break;
-        // KDF input arg is ignored as it'll be generated.
-        case MFDES_KDF_ALGO_NONE:
-            break;
-        default:
-            PrintAndLogEx(WARNING, "KDF algo %d is not supported.", cmdKdfAlgo);
+    if (kdfiid) {
+        int datalen = kdfInputLen;
+        uint8_t data[200] = {0};
+        if (CLIParamHexToBuf(arg_get_str(ctx, kdfiid), data, sizeof(data), &datalen))
+            return PM3_ESOFT;
+        if (datalen) {
+            kdfInputLen = datalen;
+            memcpy(kdfInput, data, datalen);
+        }
+    }
+
+    if (cmodeid) {
+        if (CLIGetOptionList(arg_get_str(ctx, cmodeid), DesfireCommunicationModeOpts, &commmode))
+            return PM3_ESOFT;
+    }
+
+    if (ccsetid) {
+        if (CLIGetOptionList(arg_get_str(ctx, ccsetid), DesfireCommandSetOpts, &commset))
+            return PM3_ESOFT;
+    }
+
+    if (schannid) {
+
+        if (CLIGetOptionList(arg_get_str(ctx, schannid), DesfireSecureChannelOpts, &secchann))
+            return PM3_ESOFT;
+    }
+
+    if (appid && id) {
+        *id = 0x000000;
+        if (CLIGetUint32Hex(ctx, appid, 0x000000, id, NULL, 3, "AID must have 3 bytes length"))
             return PM3_EINVARG;
+        if (selectway)
+            *selectway = ISW6bAID;
     }
 
-    // KEY
-    int res = handler_desfire_select_application(aid);
-    if (res != PM3_SUCCESS) return res;
+    if (appisoid && id) {
+        uint32_t xisoid = 0x0000;
+        bool isoidpresent = false;
+        if (CLIGetUint32Hex(ctx, appisoid, 0x0000, &xisoid, &isoidpresent, 2, "Application ISO ID (for EF) must have 2 bytes length"))
+            return PM3_EINVARG;
 
-    if (memcmp(aid, "\x00\x00\x00", 3) != 0) {
-        uint8_t file_ids[33] = {0};
-        uint32_t file_ids_len = 0;
-        res = handler_desfire_fileids(file_ids, &file_ids_len);
-        if (res != PM3_SUCCESS) return res;
+        if (isoidpresent) {
+            *id = xisoid & 0xffff;
+            if (selectway)
+                *selectway = ISWIsoID;
+        }
     }
 
-    mfdes_authinput_t payload;
-    payload.keylen = keylength;
-    memcpy(payload.key, key, keylength);
-    payload.mode = cmdAuthMode;
-    payload.algo = cmdAuthAlgo;
-    payload.keyno = cmdKeyNo;
-    payload.kdfAlgo = cmdKdfAlgo;
-    payload.kdfInputLen = kdfInputLen;
-    memcpy(payload.kdfInput, kdfInput, kdfInputLen);
+    DesfireSetKey(dctx, keynum, algores, key);
+    DesfireSetKdf(dctx, kdfAlgo, kdfInput, kdfInputLen);
+    DesfireSetCommandSet(dctx, commset);
+    DesfireSetCommMode(dctx, commmode);
+    if (securechannel)
+        *securechannel = secchann;
 
-    int error = handler_desfire_auth(&payload, rpayload);
-    if (error == PM3_SUCCESS) {
-        memcpy(&currentauth[payload.keyno], &payload, sizeof(mfdes_authinput_t));
+    return PM3_SUCCESS;
+}
+
+static int CmdHF14ADesDefault(const char *Cmd) {
+    CLIParserContext *ctx;
+    CLIParserInit(&ctx, "hf mfdes default",
+                  "Set default parameters for access to desfire card.",
+                  "hf mfdes default -n 0 -t des -k 0000000000000000 -f none -> save to the default parameters");
+
+    void *argtable[] = {
+        arg_param_begin,
+        arg_int0("n",  "keyno",   "<keyno>", "Key number"),
+        arg_str0("t",  "algo",    "<DES/2TDEA/3TDEA/AES>",  "Crypt algo: DES, 2TDEA, 3TDEA, AES"),
+        arg_str0("k",  "key",     "<Key>",   "Key for authenticate (HEX 8(DES), 16(2TDEA or AES) or 24(3TDEA) bytes)"),
+        arg_str0("f",  "kdf",     "<none/AN10922/gallagher>",   "Key Derivation Function (KDF): None, AN10922, Gallagher"),
+        arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
+        arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
+        arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
+        arg_param_end
+    };
+    CLIExecWithReturn(ctx, Cmd, argtable, true);
+
+    DesfireContext_t dctx;
+    int securechann = defaultSecureChannel;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, &securechann, DCMNone, NULL, NULL);
+    if (res) {
+        CLIParserFree(ctx);
+        return res;
     }
 
-    return error;
+    CLIParserFree(ctx);
+
+    defaultKeyNum = dctx.keyNum;
+    defaultAlgoId = dctx.keyType;
+    memcpy(defaultKey, dctx.key, DESFIRE_MAX_KEY_SIZE);
+    defaultKdfAlgo = dctx.kdfAlgo;
+    defaultKdfInputLen = dctx.kdfInputLen;
+    memcpy(defaultKdfInput, dctx.kdfInput, sizeof(dctx.kdfInput));
+    defaultSecureChannel = securechann;
+    defaultCommSet = dctx.cmdSet;
+    defaultCommMode = dctx.commMode;
+
+    PrintAndLogEx(INFO, "-----------" _CYAN_("Default parameters") "---------------------------------");
+
+    PrintAndLogEx(INFO, "Key Num     : %d", defaultKeyNum);
+    PrintAndLogEx(INFO, "Algo        : %s", CLIGetOptionListStr(DesfireAlgoOpts, defaultAlgoId));
+    PrintAndLogEx(INFO, "Key         : %s", sprint_hex(defaultKey, desfire_get_key_length(defaultAlgoId)));
+    PrintAndLogEx(INFO, "KDF algo    : %s", CLIGetOptionListStr(DesfireKDFAlgoOpts, defaultKdfAlgo));
+    PrintAndLogEx(INFO, "KDF input   : [%d] %s", defaultKdfInputLen, sprint_hex(defaultKdfInput, defaultKdfInputLen));
+    PrintAndLogEx(INFO, "Secure chan : %s", CLIGetOptionListStr(DesfireSecureChannelOpts, defaultSecureChannel));
+    PrintAndLogEx(INFO, "Command set : %s", CLIGetOptionListStr(DesfireCommandSetOpts, defaultCommSet));
+    PrintAndLogEx(INFO, "Comm mode   : %s", CLIGetOptionListStr(DesfireCommunicationModeOpts, defaultCommMode));
+
+    return PM3_SUCCESS;
 }
 
 static int CmdHF14ADesInfo(const char *Cmd) {
@@ -1261,12 +563,14 @@ static int CmdHF14ADesInfo(const char *Cmd) {
     mfdes_info_res_t info;
     int res = mfdes_get_info(&info);
     if (res != PM3_SUCCESS) {
+        DropField();
         return res;
     }
 
     nxp_cardtype_t cardtype = getCardType(info.versionHW[3], info.versionHW[4]);
     if (cardtype == PLUS_EV1) {
         PrintAndLogEx(INFO, "Card seems to be MIFARE Plus EV1.  Try " _YELLOW_("`hf mfp info`"));
+        DropField();
         return PM3_SUCCESS;
     }
 
@@ -1317,20 +621,14 @@ static int CmdHF14ADesInfo(const char *Cmd) {
     if (major == 0 && minor == 2)
         PrintAndLogEx(INFO, "\t0.2 - DESFire Light, Originality check, ");
 
-    DesfireContext dctx = {0};
+    DesfireContext_t dctx = {0};
     dctx.commMode = DCMPlain;
     dctx.cmdSet = DCCNative;
-    res = DesfireSelectAIDHex(&dctx, 0x000000, false, 0);
-    if (res != PM3_SUCCESS)
+
+    res = DesfireAnticollision(false);
+    if (res != PM3_SUCCESS) {
+        DropField();
         return res;
-
-    PICCInfoS PICCInfo = {0};
-
-    uint8_t aidbuf[250] = {0};
-    size_t aidbuflen = 0;
-    res = DesfireGetAIDList(&dctx, aidbuf, &aidbuflen);
-    if (res == PM3_SUCCESS) {
-        PICCInfo.appCount = aidbuflen / 3;
     }
 
     if (cardtype == DESFIRE_EV2 ||
@@ -1352,6 +650,15 @@ static int CmdHF14ADesInfo(const char *Cmd) {
         } else {
             PrintAndLogEx(WARNING, "--- Card doesn't support GetSignature cmd");
         }
+    }
+
+    PICCInfo_t PICCInfo = {0};
+
+    uint8_t aidbuf[250] = {0};
+    size_t aidbuflen = 0;
+    res = DesfireGetAIDList(&dctx, aidbuf, &aidbuflen);
+    if (res == PM3_SUCCESS) {
+        PICCInfo.appCount = aidbuflen / 3;
     }
 
     if (aidbuflen > 2) {
@@ -1464,19 +771,24 @@ static void DesFill2bPattern(
     (*startPattern)++;
 }
 
-static int AuthCheckDesfire(uint8_t *aid,
+static int AuthCheckDesfire(DesfireContext_t *dctx,
+                            DesfireSecureChannel secureChannel,
+                            uint8_t *aid,
                             uint8_t deskeyList[MAX_KEYS_LIST_LEN][8], uint32_t deskeyListLen,
                             uint8_t aeskeyList[MAX_KEYS_LIST_LEN][16], uint32_t aeskeyListLen,
                             uint8_t k3kkeyList[MAX_KEYS_LIST_LEN][24], uint32_t k3kkeyListLen,
                             uint8_t cmdKdfAlgo, uint8_t kdfInputLen, uint8_t *kdfInput,
-                            uint8_t foundKeys[4][0xE][24 + 1], bool *result) {
+                            uint8_t foundKeys[4][0xE][24 + 1],
+                            bool *result,
+                            bool verbose) {
 
     uint32_t curaid = (aid[0] & 0xFF) + ((aid[1] & 0xFF) << 8) + ((aid[2] & 0xFF) << 16);
 
-    int res = handler_desfire_select_application(aid);
+    int res = DesfireSelectAIDHex(dctx, curaid, false, 0);
     if (res != PM3_SUCCESS) {
         PrintAndLogEx(ERR, "AID 0x%06X does not exist.", curaid);
-        return res;
+        DropField();
+        return PM3_ESOFT;
     }
 
     int usedkeys[0xF] = {0};
@@ -1485,78 +797,69 @@ static int AuthCheckDesfire(uint8_t *aid,
     bool aes = false;
     bool k3kdes = false;
 
-    uint8_t num_keys = 0;
-    uint8_t key_setting = 0;
-    res = handler_desfire_getkeysettings(&key_setting, &num_keys);
-    if (res != PM3_SUCCESS) {
+    uint8_t data[250] = {0};
+    size_t datalen = 0;
+
+    res = DesfireGetKeySettings(dctx, data, &datalen);
+    if (res != PM3_SUCCESS && datalen < 2) {
         PrintAndLogEx(ERR, "Could not get key settings");
         return res;
     }
-
-    if (memcmp(aid, "\x00\x00\x00", 3) != 0) {
-        uint8_t file_ids[33] = {0};
-        uint32_t file_ids_len = 0;
-        // Get File IDs
-        if (handler_desfire_fileids(file_ids, &file_ids_len) == PM3_SUCCESS) {
-
-            for (int j = (int)file_ids_len - 1; j >= 0; j--) {
-
-                uint8_t filesettings[20] = {0};
-                uint32_t fileset_len = 0;
-
-                res = handler_desfire_filesettings(file_ids[j], filesettings, &fileset_len);
-                if (res == PM3_SUCCESS) {
-
-                    uint16_t accrights = (filesettings[3] << 8) + filesettings[2];
-                    uint8_t change_access_rights = accrights & 0xF;
-                    uint8_t read_write_access = (accrights >> 4) & 0xF;
-                    uint8_t write_access = (accrights >> 8) & 0xF;
-                    uint8_t read_access = (accrights >> 12) & 0xF;
-
-                    if (change_access_rights == 0xE) change_access_rights = 0x0;
-                    if (read_write_access == 0xE) read_write_access = 0x0;
-                    if (write_access == 0xE) write_access = 0x0;
-                    if (read_access == 0xE) read_access = 0x0;
-
-                    usedkeys[change_access_rights] = 1;
-                    usedkeys[read_write_access] = 1;
-                    usedkeys[write_access] = 1;
-                    usedkeys[read_access] = 1;
-
-                    if (res == PM3_SUCCESS) {
-                        switch (num_keys >> 6) {
-                            case 0:
-                                des = true;
-                                tdes = true;
-                                break;
-                            case 1:
-                                k3kdes = true;
-                                break;
-                            case 2:
-                                aes = true;
-                                break;
-                            default:
-                                break;
-                        }
-                    }
-                }
-            }
-
-            if (file_ids_len == 0) {
-                for (uint8_t z = 0; z < 0xE; z++) {
-                    usedkeys[z] = 1;
-                    des = true;
-                    tdes = true;
-                    aes = true;
-                    k3kdes = true;
-                }
-            }
-        }
-    } else {
-        des = true;
+    uint8_t num_keys = data[1];
+    switch (num_keys >> 6) {
+        case 0:
+            des = true;
+            tdes = true;
+            break;
+        case 1:
+            k3kdes = true;
+            break;
+        case 2:
+            aes = true;
+            break;
+        default:
+            break;
     }
 
-    int error;
+    // always check master key
+    usedkeys[0] = 1;
+
+    if (curaid != 0) {
+        FileList_t fileList = {0};
+        size_t filescount = 0;
+        bool isopresent = 0;
+        res = DesfireFillFileList(dctx, fileList, &filescount, &isopresent);
+        if (res == PM3_SUCCESS) {
+            if (filescount > 0) {
+                for (int i = 0; i < filescount; i++) {
+                    if (fileList[i].fileSettings.rAccess < 0x0e)
+                        usedkeys[fileList[i].fileSettings.rAccess] = 1;
+                    if (fileList[i].fileSettings.wAccess < 0x0e)
+                        usedkeys[fileList[i].fileSettings.wAccess] = 1;
+                    if (fileList[i].fileSettings.rwAccess < 0x0e)
+                        usedkeys[fileList[i].fileSettings.rwAccess] = 1;
+                    if (fileList[i].fileSettings.chAccess < 0x0e)
+                        usedkeys[fileList[i].fileSettings.chAccess] = 1;
+                }
+            } else {
+                for (int i = 0; i < 0xE; i++)
+                    usedkeys[i] = 1;
+            }
+        } else {
+            for (int i = 0; i < 0xE; i++)
+                usedkeys[i] = 1;
+        }
+    }
+
+    if (verbose) {
+        PrintAndLogEx(INFO, "Check: %s %s %s %s " NOLF, (des) ? "DES" : "", (tdes) ? "2TDEA" : "", (k3kdes) ? "3TDEA" : "", (aes) ? "AES" : "");
+        PrintAndLogEx(NORMAL, "keys: " NOLF);
+        for (int i = 0; i < 0xE; i++)
+            if (usedkeys[i] == 1)
+                PrintAndLogEx(NORMAL, "%02x " NOLF, i);
+        PrintAndLogEx(NORMAL, "");
+    }
+
     bool badlen = false;
 
     if (des) {
@@ -1565,18 +868,18 @@ static int AuthCheckDesfire(uint8_t *aid,
 
             if (usedkeys[keyno] == 1 && foundKeys[0][keyno][0] == 0) {
                 for (uint32_t curkey = 0; curkey < deskeyListLen; curkey++) {
-                    mfdes_auth_res_t rpayload;
-                    error = desfire_authenticate(MFDES_AUTH_DES, MFDES_ALGO_DES, aid, deskeyList[curkey], keyno, 0, 0, NULL, &rpayload);
-                    if (error == PM3_SUCCESS) {
-                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found DES Key %u        : " _GREEN_("%s"), curaid, keyno, sprint_hex(deskeyList[curkey], 8));
+                    DesfireSetKeyNoClear(dctx, keyno, T_DES, deskeyList[curkey]);
+                    res = DesfireAuthenticate(dctx, secureChannel, false);
+                    if (res == PM3_SUCCESS) {
+                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found DES Key %02u          : " _GREEN_("%s"), curaid, keyno, sprint_hex(deskeyList[curkey], 8));
                         foundKeys[0][keyno][0] = 0x01;
                         *result = true;
                         memcpy(&foundKeys[0][keyno][1], deskeyList[curkey], 8);
                         break;
-                    } else if (error < 7) {
+                    } else if (res < 7) {
                         badlen = true;
-                        DropFieldDesfire();
-                        res = handler_desfire_select_application(aid);
+                        DropField();
+                        res = DesfireSelectAIDHex(dctx, curaid, false, 0);
                         if (res != PM3_SUCCESS) {
                             return res;
                         }
@@ -1597,18 +900,18 @@ static int AuthCheckDesfire(uint8_t *aid,
 
             if (usedkeys[keyno] == 1 && foundKeys[1][keyno][0] == 0) {
                 for (uint32_t curkey = 0; curkey < aeskeyListLen; curkey++) {
-                    mfdes_auth_res_t rpayload;
-                    error = desfire_authenticate(MFDES_AUTH_DES, MFDES_ALGO_3DES, aid, aeskeyList[curkey], keyno, 0, 0, NULL, &rpayload);
-                    if (error == PM3_SUCCESS) {
-                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found 3DES Key %u        : " _GREEN_("%s"), curaid, keyno, sprint_hex(aeskeyList[curkey], 16));
+                    DesfireSetKeyNoClear(dctx, keyno, T_3DES, aeskeyList[curkey]);
+                    res = DesfireAuthenticate(dctx, secureChannel, false);
+                    if (res == PM3_SUCCESS) {
+                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found 2TDEA Key %02u        : " _GREEN_("%s"), curaid, keyno, sprint_hex(aeskeyList[curkey], 16));
                         foundKeys[1][keyno][0] = 0x01;
                         *result = true;
                         memcpy(&foundKeys[1][keyno][1], aeskeyList[curkey], 16);
                         break;
-                    } else if (error < 7) {
+                    } else if (res < 7) {
                         badlen = true;
-                        DropFieldDesfire();
-                        res = handler_desfire_select_application(aid);
+                        DropField();
+                        res = DesfireSelectAIDHex(dctx, curaid, false, 0);
                         if (res != PM3_SUCCESS) {
                             return res;
                         }
@@ -1629,18 +932,18 @@ static int AuthCheckDesfire(uint8_t *aid,
 
             if (usedkeys[keyno] == 1 && foundKeys[2][keyno][0] == 0) {
                 for (uint32_t curkey = 0; curkey < aeskeyListLen; curkey++) {
-                    mfdes_auth_res_t rpayload;
-                    error = desfire_authenticate(MFDES_AUTH_AES, MFDES_ALGO_AES, aid, aeskeyList[curkey], keyno, cmdKdfAlgo, kdfInputLen, kdfInput, &rpayload);
-                    if (error == PM3_SUCCESS) {
-                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found AES Key %u        : " _GREEN_("%s"), curaid, keyno, sprint_hex(aeskeyList[curkey], 16));
+                    DesfireSetKeyNoClear(dctx, keyno, T_AES, aeskeyList[curkey]);
+                    res = DesfireAuthenticate(dctx, secureChannel, false);
+                    if (res == PM3_SUCCESS) {
+                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found AES Key %02u          : " _GREEN_("%s"), curaid, keyno, sprint_hex(aeskeyList[curkey], 16));
                         foundKeys[2][keyno][0] = 0x01;
                         *result = true;
                         memcpy(&foundKeys[2][keyno][1], aeskeyList[curkey], 16);
                         break;
-                    } else if (error < 7) {
+                    } else if (res < 7) {
                         badlen = true;
-                        DropFieldDesfire();
-                        res = handler_desfire_select_application(aid);
+                        DropField();
+                        res = DesfireSelectAIDHex(dctx, curaid, false, 0);
                         if (res != PM3_SUCCESS) {
                             return res;
                         }
@@ -1661,18 +964,18 @@ static int AuthCheckDesfire(uint8_t *aid,
 
             if (usedkeys[keyno] == 1 && foundKeys[3][keyno][0] == 0) {
                 for (uint32_t curkey = 0; curkey < k3kkeyListLen; curkey++) {
-                    mfdes_auth_res_t rpayload;
-                    error = desfire_authenticate(MFDES_AUTH_ISO, MFDES_ALGO_3K3DES, aid, k3kkeyList[curkey], keyno, 0, 0, NULL, &rpayload);
-                    if (error == PM3_SUCCESS) {
-                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found 3K3 Key %u        : " _GREEN_("%s"), curaid, keyno, sprint_hex(k3kkeyList[curkey], 24));
+                    DesfireSetKeyNoClear(dctx, keyno, T_3K3DES, k3kkeyList[curkey]);
+                    res = DesfireAuthenticate(dctx, secureChannel, false);
+                    if (res == PM3_SUCCESS) {
+                        PrintAndLogEx(SUCCESS, "AID 0x%06X, Found 3TDEA Key %02u        : " _GREEN_("%s"), curaid, keyno, sprint_hex(k3kkeyList[curkey], 24));
                         foundKeys[3][keyno][0] = 0x01;
                         *result = true;
                         memcpy(&foundKeys[3][keyno][1], k3kkeyList[curkey], 16);
                         break;
-                    } else if (error < 7) {
+                    } else if (res < 7) {
                         badlen = true;
-                        DropFieldDesfire();
-                        res = handler_desfire_select_application(aid);
+                        DropField();
+                        res = DesfireSelectAIDHex(dctx, curaid, false, 0);
                         if (res != PM3_SUCCESS) {
                             return res;
                         }
@@ -1686,7 +989,7 @@ static int AuthCheckDesfire(uint8_t *aid,
             }
         }
     }
-    DropFieldDesfire();
+    DropField();
     return PM3_SUCCESS;
 }
 
@@ -1711,7 +1014,7 @@ static int CmdHF14aDesChk(const char *Cmd) {
 
     void *argtable[] = {
         arg_param_begin,
-        arg_strx0("a",  "aid",      "<aid>", "Use specific AID (3 hex bytes, big endian)"),
+        arg_strx0(NULL,  "aid",      "<aid>", "Use specific AID (3 hex bytes, big endian)"),
         arg_str0("k",  "key",       "<Key>", "Key for checking (HEX 16 bytes)"),
         arg_str0("d",  "dict",      "<file>", "File with keys dictionary"),
         arg_lit0(NULL,  "pattern1b", "Check all 1-byte combinations of key (0000...0000, 0101...0101, 0202...0202, ...)"),
@@ -1721,9 +1024,12 @@ static int CmdHF14aDesChk(const char *Cmd) {
         arg_lit0("v",  "verbose",   "Verbose mode."),
         arg_int0("f",  "kdf",     "<kdf>", "Key Derivation Function (KDF) (0=None, 1=AN10922, 2=Gallagher)"),
         arg_str0("i",  "kdfi",    "<kdfi>", "KDF input (HEX 1-31 bytes)"),
+        arg_lit0("a",  "apdu",    "show APDU requests and responses"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
+
+    bool APDULogging = arg_get_lit(ctx, 11);
 
     int aidlength = 0;
     uint8_t aid[3] = {0};
@@ -1807,6 +1113,7 @@ static int CmdHF14aDesChk(const char *Cmd) {
     CLIGetHexWithReturn(ctx, 10, kdfInput, &kdfInputLen);
 
     CLIParserFree(ctx);
+    SetAPDULogging(APDULogging);
 
     // 1-byte pattern search mode
     if (pattern1b) {
@@ -1869,22 +1176,31 @@ static int CmdHF14aDesChk(const char *Cmd) {
 
     bool result = false;
     uint8_t app_ids[78] = {0};
-    uint32_t app_ids_len = 0;
+    size_t app_ids_len = 0;
 
     clearCommandBuffer();
 
-    mfdes_info_res_t info = {0};
-    res = mfdes_get_info(&info);
-    if (res != PM3_SUCCESS) {
-        return res;
-    }
-    // TODO: Store this UID someowhere not global
-    memcpy(tag->info.uid, info.uid, info.uidlen);
-    tag->info.uidlen = info.uidlen;
+    DesfireContext_t dctx;
+    DesfireSetKdf(&dctx, cmdKDFAlgo, kdfInput, kdfInputLen);
+    DesfireSetCommandSet(&dctx, DCCNativeISO);
+    DesfireSetCommMode(&dctx, DCMPlain);
+    DesfireSecureChannel secureChannel = DACEV1;
 
-    if (handler_desfire_appids(app_ids, &app_ids_len) != PM3_SUCCESS) {
+    // save card UID to dctx
+    DesfireGetCardUID(&dctx);
+
+    res = DesfireSelectAIDHex(&dctx, 0x000000, false, 0);
+    if (res != PM3_SUCCESS) {
+        PrintAndLogEx(ERR, "Can't select PICC level.");
+        DropField();
+        return PM3_ESOFT;
+    }
+
+
+    res = DesfireGetAIDList(&dctx, app_ids, &app_ids_len);
+    if (res != PM3_SUCCESS) {
         PrintAndLogEx(ERR, "Can't get list of applications on tag");
-        DropFieldDesfire();
+        DropField();
         return PM3_ESOFT;
     }
 
@@ -1898,7 +1214,7 @@ static int CmdHF14aDesChk(const char *Cmd) {
         uint32_t curaid = (app_ids[x * 3] & 0xFF) + ((app_ids[(x * 3) + 1] & 0xFF) << 8) + ((app_ids[(x * 3) + 2] & 0xFF) << 16);
         PrintAndLogEx(ERR, "Checking aid 0x%06X...", curaid);
 
-        res = AuthCheckDesfire(&app_ids[x * 3], deskeyList, deskeyListLen, aeskeyList, aeskeyListLen, k3kkeyList, k3kkeyListLen, cmdKDFAlgo, kdfInputLen, kdfInput, foundKeys, &result);
+        res = AuthCheckDesfire(&dctx, secureChannel, &app_ids[x * 3], deskeyList, deskeyListLen, aeskeyList, aeskeyListLen, k3kkeyList, k3kkeyListLen, cmdKDFAlgo, kdfInputLen, kdfInput, foundKeys, &result, (verbose == false));
         if (res == PM3_EOPABORTED) {
             break;
         }
@@ -1941,6 +1257,7 @@ static int CmdHF14aDesChk(const char *Cmd) {
 
     // save keys to json
     if ((jsonnamelen > 0) && result) {
+        DropField();
         // MIFARE DESFire info
         SendCommandMIX(CMD_HF_ISO14443A_READER, ISO14A_CONNECT, 0, 0, NULL, 0);
 
@@ -1969,6 +1286,7 @@ static int CmdHF14aDesChk(const char *Cmd) {
         saveFileJSON((char *)jsonname, jsfMfDesfireKeys, data, 0xE, NULL);
     }
 
+    DropField();
     return PM3_SUCCESS;
 }
 
@@ -1976,305 +1294,33 @@ static int CmdHF14ADesList(const char *Cmd) {
     return CmdTraceListAlias(Cmd, "hf mfdes", "des");
 }
 
-/*
-static int CmdHF14aDesNDEFRead(const char *Cmd) {
-    DropFieldDesfire();
+static int DesfireAuthCheck(DesfireContext_t *dctx, uint32_t appid, DesfireSecureChannel secureChannel, uint8_t *key) {
+    DesfireSetKeyNoClear(dctx, dctx->keyNum, dctx->keyType, key);
 
-    CLIParserContext *ctx;
-    CLIParserInit(&ctx, "hf mfdes ndefread",
-                  "Prints NFC Data Exchange Format (NDEF)",
-                  "hf mfdes ndefread -> shows NDEF data\n"
-                  "hf mfdes ndefread -v -> shows NDEF parsed and raw data\n"
-                  "hf mfdes ndefread -a e103 -k d3f7d3f7d3f7d3f7d3f7d3f7d3f7d3f7 -> shows NDEF data with custom AID and key");
-
-    void *argtable[] = {
-        arg_param_begin,
-        arg_litn("v",  "verbose",  0, 2, "show technical data"),
-        arg_str0(NULL, "aid",      "<aid>", "replace default aid for NDEF"),
-        arg_str0("k",  "key",      "<key>", "replace default key for NDEF"),
-        arg_param_end
-    };
-    CLIExecWithReturn(ctx, Cmd, argtable, true);
-
-    bool verbose = arg_get_lit(ctx, 1);
-    bool verbose2 = arg_get_lit(ctx, 1) > 1;
-    uint8_t aid[2] = {0};
-    int aidlen;
-    CLIGetHexWithReturn(ctx, 2, aid, &aidlen);
-    uint8_t key[16] = {0};
-    int keylen;
-    CLIGetHexWithReturn(ctx, 3, key, &keylen);
-
-    CLIParserFree(ctx);
-
-    uint32_t ndefAID = 0xEEEE10;
-    if (aidlen == 2) {
-        ndefAID = (aid[0] << 16) | (aid[1] << 8) | aid[2];
-    }
-
-    // set default NDEF key
-    uint8_t ndefkey[16] = {0};
-    memcpy(ndefkey, g_mifarep_ndef_key, 16);
-
-    // user supplied key
-    if (keylen == 16) {
-        memcpy(ndefkey, key, 16);
-    }
-
-    int file_ids_len = 0;
-
-    for (int j = (int)file_ids_len - 1; j >= 0; j--) {
-        PrintAndLogEx(SUCCESS, "\n\n   Fileid %d (0x%02x)", file_ids[j], file_ids[j]);
-
-        uint8_t filesettings[20] = {0};
-        uint32_t fileset_len = 0;
-
-        int res = handler_desfire_filesettings(file_ids[j], filesettings, &fileset_len);
-        if (res != PM3_SUCCESS) continue;
-
-        int maclen = 0; // To be implemented
-
-        if (fileset_len == 1 + 1 + 2 + 3 + maclen) {
-            int filesize = (filesettings[6] << 16) + (filesettings[5] << 8) + filesettings[4];
-            mfdes_data_t fdata;
-            fdata.fileno = file_ids[j];
-            memset(fdata.offset, 0, 3);
-            memset(fdata.length, 0, 3);
-
-            uint8_t *data = (uint8_t *)calloc(filesize, sizeof(uint8_t));
-            if (data == NULL) {
-                DropFieldDesfire();
-                return PM3_EMALLOC;
-            }
-
-            fdata.data = data;
-            res = handler_desfire_readdata(&fdata, MFDES_DATA_FILE, filesettings[1]);
-            if (res == PM3_SUCCESS) {
-                uint32_t len = le24toh(fdata.length);
-                NDEFDecodeAndPrint(data, datalen, verbose);
-
-            } else {
-                PrintAndLogEx(ERR, "Couldn't read value. Error %d", res);
-                res = handler_desfire_select_application(aid);
-                if (res != PM3_SUCCESS) continue;
-            }
-
-            free(data);
-        }
-    }
-
-    if (!datalen) {
-        PrintAndLogEx(ERR, "no NDEF data");
+    int res = DesfireAuthenticate(dctx, secureChannel, false);
+    if (res == PM3_SUCCESS) {
+        memcpy(dctx->key, key, desfire_get_key_length(dctx->keyType));
         return PM3_SUCCESS;
-    }
-
-    if (verbose2) {
-        PrintAndLogEx(NORMAL, "");
-        PrintAndLogEx(INFO, "--- " _CYAN_("DESFire NDEF raw") " ----------------");
-        print_buffer(data, datalen, 1);
-    }
-
-    PrintAndLogEx(HINT, "Try " _YELLOW_("`hf mfdes ndefread -vv`") " for more details");
-    return PM3_SUCCESS;
-}
-*/
-/*
-static int CmdHF14aDesMAD(const char *Cmd) {
-    DropFieldDesfire();
-
-    CLIParserContext *ctx;
-    CLIParserInit(&ctx, "hf mfdes mad",
-                  "Prints MIFARE Application directory (MAD)",
-                  "hf mfdes mad      -> shows MAD data\n"
-                  "hf mfdes mad -v   -> shows MAD parsed and raw data\n"
-                  "hf mfdes mad -a e103 -k d3f7d3f7d3f7d3f7d3f7d3f7d3f7d3f7 -> shows MAD data with custom AID and key");
-
-    void *argtable[] = {
-        arg_param_begin,
-        arg_litn("v",  "verbose",  0, 2, "show technical data"),
-        arg_str0(NULL, "aid",      "<aid>", "replace default aid for MAD"),
-        arg_str0("k",  "key",      "<key>", "replace default key for MAD"),
-        arg_param_end
-    };
-    CLIExecWithReturn(ctx, Cmd, argtable, true);
-
-    CLIParserFree(ctx);
-
-    PrintAndLogEx(HINT, "Try " _YELLOW_("`hf mfdes mad -v`") " for more details");
-    return PM3_SUCCESS;
-}
-*/
-
-static uint8_t defaultKeyNum = 0;
-static enum DESFIRE_CRYPTOALGO defaultAlgoId = T_DES;
-static uint8_t defaultKey[DESFIRE_MAX_KEY_SIZE] = {0};
-static int defaultKdfAlgo = MFDES_KDF_ALGO_NONE;
-static int defaultKdfInputLen = 0;
-static uint8_t defaultKdfInput[50] = {0};
-static DesfireSecureChannel defaultSecureChannel = DACEV1;
-static DesfireCommandSet defaultCommSet = DCCNativeISO;
-static DesfireCommunicationMode defaultCommMode = DCMPlain;
-
-static int CmdDesGetSessionParameters(CLIParserContext *ctx, DesfireContext *dctx,
-                                      uint8_t keynoid, uint8_t algoid, uint8_t keyid,
-                                      uint8_t kdfid, uint8_t kdfiid,
-                                      uint8_t cmodeid, uint8_t ccsetid, uint8_t schannid,
-                                      uint8_t appid,
-                                      int *securechannel,
-                                      DesfireCommunicationMode defcommmode,
-                                      uint32_t *aid) {
-
-    uint8_t keynum = defaultKeyNum;
-    int algores = defaultAlgoId;
-    uint8_t key[DESFIRE_MAX_KEY_SIZE] = {0};
-    memcpy(key, defaultKey, DESFIRE_MAX_KEY_SIZE);
-    int kdfAlgo = defaultKdfAlgo;
-    int kdfInputLen = defaultKdfInputLen;
-    uint8_t kdfInput[50] = {0};
-    memcpy(kdfInput, defaultKdfInput, defaultKdfInputLen);
-    int commmode = defaultCommMode;
-    if (defcommmode != DCMNone)
-        commmode = defcommmode;
-    int commset = defaultCommSet;
-    int secchann = defaultSecureChannel;
-
-    if (keynoid) {
-        keynum = arg_get_int_def(ctx, keynoid, keynum);
-    }
-
-    if (algoid) {
-        if (CLIGetOptionList(arg_get_str(ctx, algoid), DesfireAlgoOpts, &algores))
-            return PM3_ESOFT;
-    }
-
-    if (keyid) {
-        int keylen = 0;
-        uint8_t keydata[200] = {0};
-        if (CLIParamHexToBuf(arg_get_str(ctx, keyid), keydata, sizeof(keydata), &keylen))
-            return PM3_ESOFT;
-        if (keylen && keylen != desfire_get_key_length(algores)) {
-            PrintAndLogEx(ERR, "%s key must have %d bytes length instead of %d.", CLIGetOptionListStr(DesfireAlgoOpts, algores), desfire_get_key_length(algores), keylen);
-            return PM3_EINVARG;
+    } else if (res < 7) {
+        DropField();
+        res = DesfireSelectAIDHex(dctx, appid, false, 0);
+        if (res != PM3_SUCCESS) {
+            return -10;
         }
-        if (keylen)
-            memcpy(key, keydata, keylen);
+        return -11;
     }
-
-    if (kdfid) {
-        if (CLIGetOptionList(arg_get_str(ctx, kdfid), DesfireKDFAlgoOpts, &kdfAlgo))
-            return PM3_ESOFT;
-    }
-
-    if (kdfiid) {
-        int datalen = kdfInputLen;
-        uint8_t data[200] = {0};
-        if (CLIParamHexToBuf(arg_get_str(ctx, kdfiid), data, sizeof(data), &datalen))
-            return PM3_ESOFT;
-        if (datalen) {
-            kdfInputLen = datalen;
-            memcpy(kdfInput, data, datalen);
-        }
-    }
-
-    if (cmodeid) {
-        if (CLIGetOptionList(arg_get_str(ctx, cmodeid), DesfireCommunicationModeOpts, &commmode))
-            return PM3_ESOFT;
-    }
-
-    if (ccsetid) {
-        if (CLIGetOptionList(arg_get_str(ctx, ccsetid), DesfireCommandSetOpts, &commset))
-            return PM3_ESOFT;
-    }
-
-    if (schannid) {
-
-        if (CLIGetOptionList(arg_get_str(ctx, schannid), DesfireSecureChannelOpts, &secchann))
-            return PM3_ESOFT;
-    }
-
-    if (appid && aid) {
-        *aid = 0x000000;
-        int res = arg_get_u32_hexstr_def_nlen(ctx, appid, 0x000000, aid, 3, true);
-        if (res == 0)
-            return PM3_ESOFT;
-        if (res == 2) {
-            PrintAndLogEx(ERR, "AID length must have 3 bytes length");
-            return PM3_EINVARG;
-        }
-    }
-
-    DesfireSetKey(dctx, keynum, algores, key);
-    DesfireSetKdf(dctx, kdfAlgo, kdfInput, kdfInputLen);
-    DesfireSetCommandSet(dctx, commset);
-    DesfireSetCommMode(dctx, commmode);
-    if (securechannel)
-        *securechannel = secchann;
-
-    return PM3_SUCCESS;
+    return -1;
 }
 
-static int CmdHF14ADesDefault(const char *Cmd) {
+
+static int CmdHF14aDesDetect(const char *Cmd) {
     CLIParserContext *ctx;
-    CLIParserInit(&ctx, "hf mfdes default",
-                  "Set default parameters for access to desfire card.",
-                  "hf mfdes default -n 0 -t des -k 0000000000000000 -f none -> save to the default parameters");
-
-    void *argtable[] = {
-        arg_param_begin,
-        arg_int0("n",  "keyno",   "<keyno>", "Key number"),
-        arg_str0("t",  "algo",    "<DES/2TDEA/3TDEA/AES>",  "Crypt algo: DES, 2TDEA, 3TDEA, AES"),
-        arg_str0("k",  "key",     "<Key>",   "Key for authenticate (HEX 8(DES), 16(2TDEA or AES) or 24(3TDEA) bytes)"),
-        arg_str0("f",  "kdf",     "<none/AN10922/gallagher>",   "Key Derivation Function (KDF): None, AN10922, Gallagher"),
-        arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
-        arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
-        arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
-        arg_param_end
-    };
-    CLIExecWithReturn(ctx, Cmd, argtable, true);
-
-    DesfireContext dctx;
-    int securechann = defaultSecureChannel;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 1, 2, 3, 4, 5, 6, 7, 8, 0, &securechann, DCMNone, NULL);
-    if (res) {
-        CLIParserFree(ctx);
-        return res;
-    }
-
-    CLIParserFree(ctx);
-
-    defaultKeyNum = dctx.keyNum;
-    defaultAlgoId = dctx.keyType;
-    memcpy(defaultKey, dctx.key, DESFIRE_MAX_KEY_SIZE);
-    defaultKdfAlgo = dctx.kdfAlgo;
-    defaultKdfInputLen = dctx.kdfInputLen;
-    memcpy(defaultKdfInput, dctx.kdfInput, sizeof(dctx.kdfInput));
-    defaultSecureChannel = securechann;
-    defaultCommSet = dctx.cmdSet;
-    defaultCommMode = dctx.commMode;
-
-    PrintAndLogEx(INFO, "-----------" _CYAN_("Default parameters") "---------------------------------");
-
-    PrintAndLogEx(INFO, "Key Num     : %d", defaultKeyNum);
-    PrintAndLogEx(INFO, "Algo        : %s", CLIGetOptionListStr(DesfireAlgoOpts, defaultAlgoId));
-    PrintAndLogEx(INFO, "Key         : %s", sprint_hex(defaultKey, desfire_get_key_length(defaultAlgoId)));
-    PrintAndLogEx(INFO, "KDF algo    : %s", CLIGetOptionListStr(DesfireKDFAlgoOpts, defaultKdfAlgo));
-    PrintAndLogEx(INFO, "KDF input   : [%d] %s", defaultKdfInputLen, sprint_hex(defaultKdfInput, defaultKdfInputLen));
-    PrintAndLogEx(INFO, "Secure chan : %s", CLIGetOptionListStr(DesfireSecureChannelOpts, defaultSecureChannel));
-    PrintAndLogEx(INFO, "Command set : %s", CLIGetOptionListStr(DesfireCommandSetOpts, defaultCommSet));
-    PrintAndLogEx(INFO, "Comm mode   : %s", CLIGetOptionListStr(DesfireCommunicationModeOpts, defaultCommMode));
-
-    return PM3_SUCCESS;
-}
-
-static int CmdHF14ADesSelectApp(const char *Cmd) {
-    CLIParserContext *ctx;
-    CLIParserInit(&ctx, "hf mfdes selectapp",
-                  "Select application on the card. It selects app if it is a valid one or returns an error.",
-                  "hf mfdes selectapp --aid 123456 -> select application 123456\n"
-                  "hf mfdes selectapp --mf -> select master file (PICC level)\n"
-                  "hf mfdes selectapp --dfname aid123456 -> select application aid123456 by DF name\n"
-                  "hf mfdes selectapp --isoid 1111 -> select application 1111 by ISO ID");
+    CLIParserInit(&ctx, "hf mfdes detect",
+                  "Detect key type and tries to find one from the list.",
+                  "hf mfdes detect -> detect key 0 from PICC level\n"
+                  "hf mfdes detect -s d40 -> detect key 0 from PICC level via secure channel D40\n"
+                  "hf mfdes detect --dict mfdes_default_keys -> detect key 0 from PICC level with help of the standard dictionary\n"
+                  "hf mfdes detect --aid 123456 -n 2 --save -> detect key 2 from app 123456 and if succeed - save params to defaults (`default` command)");
 
     void *argtable[] = {
         arg_param_begin,
@@ -2287,11 +1333,411 @@ static int CmdHF14ADesSelectApp(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
+        arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "dict",    "<file>", "File with keys dictionary"),
+        arg_lit0(NULL, "save",    "save found key and parameters to defaults"),
+        arg_param_end
+    };
+    CLIExecWithReturn(ctx, Cmd, argtable, true);
+
+    bool APDULogging = arg_get_lit(ctx, 1);
+    bool verbose = arg_get_lit(ctx, 2);
+
+    DesfireContext_t dctx;
+    int securechann = defaultSecureChannel;
+    uint32_t appid = 0x000000;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMMACed, &appid, NULL);
+    if (res) {
+        CLIParserFree(ctx);
+        return res;
+    }
+
+    uint8_t dict_filename[FILE_PATH_SIZE + 2] = {0};
+    int dict_filenamelen = 0;
+    if (CLIParamStrToBuf(arg_get_str(ctx, 12), dict_filename, FILE_PATH_SIZE, &dict_filenamelen)) {
+        PrintAndLogEx(FAILED, "File name too long or invalid.");
+        CLIParserFree(ctx);
+        return PM3_EINVARG;
+    }
+
+    bool save = arg_get_lit(ctx, 13);
+
+    SetAPDULogging(APDULogging);
+    CLIParserFree(ctx);
+
+    // no auth and fill KDF if needs
+    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, true, verbose);
+    if (res != PM3_SUCCESS) {
+        DropField();
+        PrintAndLogEx(FAILED, "Select AID 0x%06x " _RED_("failed") ". Result: %d", appid, res);
+        return res;
+    }
+
+    bool keytypes[4] = {0};
+
+    uint8_t data[250] = {0};
+    size_t datalen = 0;
+    res = DesfireGetKeySettings(&dctx, data, &datalen);
+    if (res == PM3_SUCCESS && datalen >= 2) {
+        uint8_t num_keys = data[1];
+        switch (num_keys >> 6) {
+            case 0:
+                keytypes[T_DES] = true;
+                keytypes[T_3DES] = true;
+                break;
+            case 1:
+                keytypes[T_3K3DES] = true;
+                break;
+            case 2:
+                keytypes[T_AES] = true;
+                break;
+            default:
+                break;
+        }
+    } else {
+        // if fail - check auth commands
+        AuthCommandsChk_t authCmdCheck = {0};
+        DesfireCheckAuthCommands(appid, NULL, 0, &authCmdCheck);
+        if (authCmdCheck.checked) {
+            if (authCmdCheck.auth) {
+                keytypes[T_DES] = true;
+                keytypes[T_3DES] = true;
+
+                if (authCmdCheck.authISO) {
+                    keytypes[T_3K3DES] = true;
+                }
+            }
+            if (authCmdCheck.authAES || authCmdCheck.authEV2) {
+                keytypes[T_AES] = true;
+            }
+        } else {
+            // if nothing helps - we check DES only
+            keytypes[T_DES] = true;
+        }
+
+        res = DesfireSelectAIDHex(&dctx, appid, false, 0);
+        if (res != PM3_SUCCESS) {
+            PrintAndLogEx(ERR, "Desfire select " _RED_("error") ".");
+            return res;
+        }
+    }
+
+    if (verbose) {
+        if (appid == 0)
+            PrintAndLogEx(INFO, "Check PICC key num: %d (0x%02x)", dctx.keyNum, dctx.keyNum);
+        else
+            PrintAndLogEx(INFO, "Check app: %06x key num: %d (0x%02x)", appid, dctx.keyNum, dctx.keyNum);
+        PrintAndLogEx(INFO, "keys: DES: %s 2TDEA: %s 3TDEA: %s AES: %s",
+                      keytypes[T_DES] ? _GREEN_("YES") : _RED_("NO"),
+                      keytypes[T_3DES] ? _GREEN_("YES") : _RED_("NO"),
+                      keytypes[T_3K3DES] ? _GREEN_("YES") : _RED_("NO"),
+                      keytypes[T_AES] ? _GREEN_("YES") : _RED_("NO")
+                     );
+    }
+
+    // for key types
+    bool found = false;
+    size_t errcount = 0;
+    for (uint8_t ktype = T_DES; ktype <= T_AES; ktype++) {
+        if (!keytypes[ktype])
+            continue;
+        dctx.keyType = ktype;
+        if (verbose)
+            PrintAndLogEx(INFO, "Scan key type: %s", CLIGetOptionListStr(DesfireAlgoOpts, dctx.keyType));
+
+        if (dict_filenamelen == 0) {
+            // keys from mifaredefault.h
+            for (int i = 0; i < g_mifare_plus_default_keys_len; i++) {
+                uint8_t key[DESFIRE_MAX_KEY_SIZE] = {0};
+                if (hex_to_bytes(g_mifare_plus_default_keys[i], key, 16) != 16)
+                    continue;
+                if (ktype == T_3K3DES)
+                    memcpy(&key[16], key, 8);
+
+                res = DesfireAuthCheck(&dctx, appid, securechann, key);
+                if (res == PM3_SUCCESS) {
+                    found = true;
+                    break; // all the params already in the dctx
+                }
+                if (res == -10) {
+                    if (verbose)
+                        PrintAndLogEx(ERR, "Can't select AID. There is no connection with card.");
+
+                    found = false;
+                    break; // we can't select app after invalid 1st auth stages
+                }
+                if (res == -11) {
+                    if (errcount > 10) {
+                        if (verbose)
+                            PrintAndLogEx(ERR, "Too much errors (%zu) from card", errcount);
+                        break;
+                    }
+                    errcount++;
+                } else
+                    errcount = 0;
+            }
+        } else {
+            // keys from file
+            uint8_t keyList[MAX_KEYS_LIST_LEN * MAX_KEY_LEN] = {0};
+            uint32_t keyListLen = 0;
+            size_t keylen = desfire_get_key_length(dctx.keyType);
+            size_t endFilePosition = 0;
+
+            while (!found) {
+                res = loadFileDICTIONARYEx((char *)dict_filename, keyList, sizeof(keyList), NULL, keylen, &keyListLen, endFilePosition, &endFilePosition, verbose);
+                if (res != 1 && res != PM3_SUCCESS)
+                    break;
+
+                for (int i = 0; i < keyListLen; i++) {
+                    res = DesfireAuthCheck(&dctx, appid, securechann, &keyList[i * keylen]);
+                    if (res == PM3_SUCCESS) {
+                        found = true;
+                        break; // all the params already in the dctx
+                    }
+                    if (res == -10) {
+                        if (verbose)
+                            PrintAndLogEx(ERR, "Can't select AID. There is no connection with card.");
+
+                        found = false;
+                        break; // we can't select app after invalid 1st auth stages
+                    }
+                    if (res == -11) {
+                        if (errcount > 10) {
+                            if (verbose)
+                                PrintAndLogEx(ERR, "Too much errors (%zu) from card", errcount);
+                            break;
+                        }
+                        errcount++;
+                    } else
+                        errcount = 0;
+                }
+
+                if (endFilePosition == 0)
+                    break;
+            }
+
+        }
+        if (found)
+            break;
+    }
+
+    if (found) {
+        if (appid == 0)
+            PrintAndLogEx(INFO, _GREEN_("Found") " key num: %d (0x%02x)", dctx.keyNum, dctx.keyNum);
+        else
+            PrintAndLogEx(INFO, "Found key for app: %06x key num: %d (0x%02x)", appid, dctx.keyNum, dctx.keyNum);
+
+        PrintAndLogEx(INFO, "key " _GREEN_("%s") " [%d]: " _GREEN_("%s"),
+                      CLIGetOptionListStr(DesfireAlgoOpts, dctx.keyType),
+                      desfire_get_key_length(dctx.keyType),
+                      sprint_hex(dctx.key, desfire_get_key_length(dctx.keyType)));
+
+    } else {
+        PrintAndLogEx(INFO, "Key " _RED_("not found"));
+    }
+
+    DropField();
+
+    if (found && save) {
+        defaultKeyNum = dctx.keyNum;
+        defaultAlgoId = dctx.keyType;
+        memcpy(defaultKey, dctx.key, DESFIRE_MAX_KEY_SIZE);
+        defaultKdfAlgo = dctx.kdfAlgo;
+        defaultKdfInputLen = dctx.kdfInputLen;
+        memcpy(defaultKdfInput, dctx.kdfInput, sizeof(dctx.kdfInput));
+        defaultSecureChannel = securechann;
+        defaultCommSet = dctx.cmdSet;
+
+        PrintAndLogEx(INFO, "-----------" _CYAN_("Default parameters") "---------------------------------");
+
+        PrintAndLogEx(INFO, "Key Num     : %d", defaultKeyNum);
+        PrintAndLogEx(INFO, "Algo        : %s", CLIGetOptionListStr(DesfireAlgoOpts, defaultAlgoId));
+        PrintAndLogEx(INFO, "Key         : %s", sprint_hex(defaultKey, desfire_get_key_length(defaultAlgoId)));
+        PrintAndLogEx(INFO, "KDF algo    : %s", CLIGetOptionListStr(DesfireKDFAlgoOpts, defaultKdfAlgo));
+        PrintAndLogEx(INFO, "KDF input   : [%d] %s", defaultKdfInputLen, sprint_hex(defaultKdfInput, defaultKdfInputLen));
+        PrintAndLogEx(INFO, "Secure chan : %s", CLIGetOptionListStr(DesfireSecureChannelOpts, defaultSecureChannel));
+        PrintAndLogEx(INFO, "Command set : %s", CLIGetOptionListStr(DesfireCommandSetOpts, defaultCommSet));
+        PrintAndLogEx(INFO, _GREEN_("Saved"));
+    }
+
+    return PM3_SUCCESS;
+}
+
+// https://www.nxp.com/docs/en/application-note/AN10787.pdf
+// MIFARE Application Directory (MAD)
+// test cardholder data 0a53616d706c656d616e00475068696c697000826d00d054656c2b312f313233342f3536373800
+static int CmdHF14aDesMAD(const char *Cmd) {
+    CLIParserContext *ctx;
+    CLIParserInit(&ctx, "hf mfdes mad",
+                  "Reads and prints MIFARE Application directory (MAD).",
+                  "MAD consists of one file with issuer info (AID ffffff) and several files with AID in the special format `faaaav` (a - MAD ID, v - multiple AID over one MAD ID)\n"
+                  "The MIFARE DESFire Card Master Key settings have to allow the MIFARE DESFire command GetApplicationIDs without authentication (from datasheet)\n"
+                  "\n"
+                  "hf mfdes mad      -> shows MAD data\n"
+                  "hf mfdes mad -v   -> shows MAD parsed and raw data\n"
+                  "hf mfdes mad -a e103 -k d3f7d3f7d3f7d3f7d3f7d3f7d3f7d3f7 -> shows MAD data with custom AID and key");
+
+    void *argtable[] = {
+        arg_param_begin,
+        arg_lit0("a",  "apdu",    "show APDU requests and responses"),
+        arg_lit0("v",  "verbose", "show technical data"),
+        arg_int0("n",  "keyno",   "<keyno>", "Key number"),
+        arg_str0("t",  "algo",    "<DES/2TDEA/3TDEA/AES>",  "Crypt algo: DES, 2TDEA, 3TDEA, AES"),
+        arg_str0("k",  "key",     "<Key>",   "Key for authenticate (HEX 8(DES), 16(2TDEA or AES) or 24(3TDEA) bytes)"),
+        arg_str0("f",  "kdf",     "<none/AN10922/gallagher>",   "Key Derivation Function (KDF): None, AN10922, Gallagher"),
+        arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
+        arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
+        arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
+        arg_str0(NULL, "aid",     "<app id hex>", "Application ID of issuer info file, (non-standard feature!) (3 hex bytes, big endian)"),
+        arg_lit0(NULL, "auth",    "Authenticate to get info from GetApplicationIDs command (non-standard feature!)"),
+        arg_param_end
+    };
+    CLIExecWithReturn(ctx, Cmd, argtable, true);
+
+
+    bool APDULogging = arg_get_lit(ctx, 1);
+    bool verbose = arg_get_lit(ctx, 2);
+
+    DesfireContext_t dctx;
+    int securechann = defaultSecureChannel;
+    uint32_t appid = 0x000000;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMPlain, &appid, NULL);
+    if (res) {
+        CLIParserFree(ctx);
+        return res;
+    }
+
+    bool authen = arg_get_lit(ctx, 12);
+
+    SetAPDULogging(APDULogging);
+    CLIParserFree(ctx);
+
+    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, !authen, verbose);
+    if (res != PM3_SUCCESS) {
+        DropField();
+        return res;
+    }
+
+    PICCInfo_t PICCInfo = {0};
+    AppListS AppList = {0};
+    DesfireFillAppList(&dctx, &PICCInfo, AppList, false, false, false); // no deep scan, no scan files
+
+    if (PICCInfo.freemem == 0xffffffff)
+        PrintAndLogEx(SUCCESS, "Applications count: " _GREEN_("%zu") " free memory " _YELLOW_("n/a"), PICCInfo.appCount);
+    else
+        PrintAndLogEx(SUCCESS, "Applications count: " _GREEN_("%zu") " free memory " _GREEN_("%d") " bytes", PICCInfo.appCount, PICCInfo.freemem);
+
+    if ((PICCInfo.keySettings & (1 << 1)) == 0)
+        PrintAndLogEx(WARNING, "Directory list access with CMK : " _RED_("Enabled") ". Try to read mad with Card Master Key(");
+
+    PrintAndLogEx(SUCCESS, "----------------------------------------- " _CYAN_("MAD") " ------------------------------------------");
+    bool foundFFFFFF = false;
+    for (int i = 0; i < PICCInfo.appCount; i++) {
+        if (AppList[i].appNum == 0xffffff) {
+            foundFFFFFF = true;
+            break;
+        }
+    }
+
+    if (foundFFFFFF) {
+        res = DesfireSelectAIDHexNoFieldOn(&dctx, 0xffffff);
+        if (res == PM3_SUCCESS) {
+            uint32_t madver = 0;
+            res = DesfireValueFileOperations(&dctx, 0x00, MFDES_GET_VALUE, &madver);
+            if (res != PM3_SUCCESS) {
+                PrintAndLogEx(SUCCESS, "MAD version   : " _RED_("n/a"));
+            } else {
+                if (madver == 3)
+                    PrintAndLogEx(SUCCESS, "MAD version   : " _GREEN_("3"));
+                else
+                    PrintAndLogEx(WARNING, "MAD version   : " _YELLOW_("%d"), madver);
+            }
+
+            uint8_t data[250] = {0};
+            size_t datalen = 0;
+
+            res = DesfireReadFile(&dctx, 01, 0x000000, 0, data, &datalen);
+            if (res != PM3_SUCCESS) {
+                PrintAndLogEx(SUCCESS, "Card Holder   : " _RED_("n/a"));
+            } else {
+                if (datalen > 0) {
+                    PrintAndLogEx(SUCCESS, "Card Holder   : ");
+                    if (verbose) {
+                        print_buffer_with_offset(data, datalen, 0, true);
+                        PrintAndLogEx(NORMAL, "");
+                    }
+                    MADCardHolderInfoDecode(data, datalen, verbose);
+                    PrintAndLogEx(NORMAL, "");
+                } else {
+                    PrintAndLogEx(SUCCESS, "Card Holder   : " _YELLOW_("none"));
+                }
+            }
+
+            res = DesfireReadFile(&dctx, 02, 0x000000, 0, data, &datalen);
+            if (res != PM3_SUCCESS) {
+                PrintAndLogEx(SUCCESS, "Card Publisher: " _RED_("n/a"));
+            } else {
+                if (datalen > 0) {
+                    PrintAndLogEx(SUCCESS, "Card Publisher: ");
+                    print_buffer_with_offset(data, datalen, 0, true);
+                    PrintAndLogEx(NORMAL, "");
+                } else {
+                    PrintAndLogEx(SUCCESS, "Card Publisher: " _YELLOW_("none"));
+                }
+            }
+        } else {
+            PrintAndLogEx(WARNING,  _RED_("Can't select") " issuer information app (0xffffff).");
+        }
+    } else {
+        PrintAndLogEx(WARNING, "Issuer information " _RED_("not found") " on the card.");
+    }
+
+    size_t madappcount = 0;
+    PrintAndLogEx(SUCCESS, "Applications  : ");
+    for (int i = 0; i < PICCInfo.appCount; i++) {
+        if ((AppList[i].appNum & 0xf00000) == 0xf00000) {
+            DesfirePrintMADAID(AppList[i].appNum, verbose);
+            madappcount++;
+        }
+    }
+
+    if (madappcount == 0)
+        PrintAndLogEx(SUCCESS, "There is no MAD applications on the card");
+
+    DropField();
+    return PM3_SUCCESS;
+}
+
+static int CmdHF14ADesSelectApp(const char *Cmd) {
+    CLIParserContext *ctx;
+    CLIParserInit(&ctx, "hf mfdes selectapp",
+                  "Select application on the card. It selects app if it is a valid one or returns an error.",
+                  "hf mfdes selectapp --aid 123456 -> select application 123456\n"
+                  "hf mfdes selectapp --mf -> select master file (PICC level)\n"
+                  "hf mfdes selectapp --dfname aid123456 -> select application aid123456 by DF name\n"
+                  "hf mfdes selectapp --isoid 1111 -> select application 1111 by ISO ID\n"
+                  "hf mfdes selectapp --isoid 1111 --fileisoid 2222 -> select application 1111 file 2222 by ISO ID\n"
+                  "hf mfdes selectapp --isoid 01df --fileisoid 00ef -> select file 00 on the Desfire Light");
+
+    void *argtable[] = {
+        arg_param_begin,
+        arg_lit0("a",  "apdu",    "show APDU requests and responses"),
+        arg_lit0("v",  "verbose", "show technical data"),
+        arg_int0("n",  "keyno",   "<keyno>", "Key number"),
+        arg_str0("t",  "algo",    "<DES/2TDEA/3TDEA/AES>",  "Crypt algo: DES, 2TDEA, 3TDEA, AES"),
+        arg_str0("k",  "key",     "<Key>",   "Key for authenticate (HEX 8(DES), 16(2TDEA or AES) or 24(3TDEA) bytes)"),
+        arg_str0("f",  "kdf",     "<none/AN10922/gallagher>",   "Key Derivation Function (KDF): None, AN10922, Gallagher"),
+        arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
+        arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
+        arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID of application for some parameters (3 hex bytes, big endian)"),
         arg_str0(NULL, "dfname",  "<df name str>", "Application DF Name (string, max 16 chars). Selects application via ISO SELECT command"),
-        arg_str0(NULL, "isoid",   "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)"),
         arg_lit0(NULL, "mf",      "Select MF (master file) via ISO channel"),
+        arg_str0(NULL, "isoid",   "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)"),
+        arg_str0(NULL, "fileisoid", "<isoid hex>", "Select file inside application by ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
@@ -2299,10 +1745,10 @@ static int CmdHF14ADesSelectApp(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMPlain, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMPlain, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -2312,16 +1758,21 @@ static int CmdHF14ADesSelectApp(const char *Cmd) {
     int dfnamelen = 16;
     CLIGetStrWithReturn(ctx, 12, dfname, &dfnamelen);
 
+    bool selectmf = arg_get_lit(ctx, 13);
+
     uint32_t isoid = 0x0000;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 13, 0x0000, &isoid, 2, true);
-    bool idsoidpresent = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "ISO ID for EF or DF must have 2 bytes length");
+    bool isoidpresent = false;
+    if (CLIGetUint32Hex(ctx, 14, 0x0000, &isoid, &isoidpresent, 2, "ISO ID for EF or DF must have 2 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
-    bool selectmf = arg_get_lit(ctx, 14);
+    uint32_t fileisoid = 0x0000;
+    bool fileisoidpresent = false;
+    if (CLIGetUint32Hex(ctx, 15, 0x0000, &fileisoid, &fileisoidpresent, 2, "ISO ID for EF or DF must have 2 bytes length")) {
+        CLIParserFree(ctx);
+        return PM3_EINVARG;
+    }
 
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
@@ -2341,7 +1792,7 @@ static int CmdHF14ADesSelectApp(const char *Cmd) {
             PrintAndLogEx(FAILED, "Application " _CYAN_("FCI template") " [%zu]%s", resplen, sprint_hex(resp, resplen));
 
         PrintAndLogEx(SUCCESS, "PICC MF selected " _GREEN_("succesfully"));
-    } else if (idsoidpresent) {
+    } else if (isoidpresent) {
         uint8_t data[2] = {0};
         Uint2byteToMemLe(data, isoid);
         res = DesfireISOSelect(&dctx, ISSMFDFEF, data, 2, resp, &resplen);
@@ -2384,6 +1835,17 @@ static int CmdHF14ADesSelectApp(const char *Cmd) {
         PrintAndLogEx(SUCCESS, "Application 0x%06x selected " _GREEN_("succesfully") " ", appid);
     }
 
+    if (fileisoidpresent) {
+        res = DesfireSelectEx(&dctx, false, ISWIsoID, fileisoid, NULL);
+        if (res != PM3_SUCCESS) {
+            DropField();
+            PrintAndLogEx(FAILED, "Select file 0x%04x " _RED_("failed") " ", fileisoid);
+            return res;
+        }
+
+        PrintAndLogEx(SUCCESS, "File 0x%04x selected " _GREEN_("succesfully") " ", fileisoid);
+    }
+
     DropField();
     return res;
 }
@@ -2406,9 +1868,9 @@ static int CmdHF14ADesBruteApps(const char *Cmd) {
     };
     CLIExecWithReturn(ctx, Cmd, argtable, true);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 0, 0, 0, 0, 0, 0, 0, 0, 0, &securechann, DCMNone, NULL);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, &securechann, DCMNone, NULL, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -2496,8 +1958,9 @@ static int CmdHF14ADesAuth(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID of application for some parameters (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_lit0(NULL, "save",    "saves channels parameters to defaults if authentication succeeds"),
         arg_param_end
     };
@@ -2506,31 +1969,32 @@ static int CmdHF14ADesAuth(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMPlain, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMPlain, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
-    bool save = arg_get_lit(ctx, 12);
+    bool save = arg_get_lit(ctx, 13);
 
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, false, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, false, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
-        PrintAndLogEx(FAILED, "Select or authentication 0x%06x " _RED_("failed") ". Result [%d] %s", appid, res, DesfireAuthErrorToStr(res));
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
-    if (appid == 0x000000)
+    if (DesfireMFSelected(selectway, id))
         PrintAndLogEx(SUCCESS, "PICC selected and authenticated " _GREEN_("succesfully"));
     else
-        PrintAndLogEx(SUCCESS, "Application " _CYAN_("%06x") " selected and authenticated " _GREEN_("succesfully"), appid);
+        PrintAndLogEx(SUCCESS, "Application " _CYAN_("%s") " selected and authenticated " _GREEN_("succesfully"), DesfireWayIDStr(selectway, id));
 
     PrintAndLogEx(SUCCESS, _CYAN_("Context: "));
     DesfirePrintContext(&dctx);
@@ -2562,15 +2026,18 @@ static int CmdHF14ADesSetConfiguration(const char *Cmd) {
                   "02h ATS update.\n"
                   "03h SAK update\n"
                   "04h Secure Messaging Configuration.\n"
-                  "05h Capability data. (here change for LRP in the Desfire Light)\n"
-                  "06h DF Name renaming\n"
-                  "08h File renaming\n"
-                  "09h Value file configuration\n"
-                  "0Ah Failed authentication counter setting\n"
+                  "05h Capability data. (here change for LRP in the Desfire Light [enable 00000000010000000000])\n"
+                  "06h DF Name renaming (one-time)\n"
+                  "08h File renaming (one-time)\n"
+                  "09h Value file configuration (one-time)\n"
+                  "0Ah Failed authentication counter setting [disable 00ffffffff]\n"
                   "0Bh HW configuration\n"
                   "\n"
                   "hf mfdes setconfig --param 03 --data 0428 -> set SAK\n"
-                  "hf mfdes setconfig --param 02 --data 0875778102637264 -> set ATS (first byte - length)");
+                  "hf mfdes setconfig --param 02 --data 0875778102637264 -> set ATS (first byte - length)\n"
+                  "hf mfdes setconfig --appisoid df01 -t aes -s ev2 --param 05 --data 00000000020000000000 -> set LRP mode enable for Desfire Light\n"
+                  "hf mfdes setconfig --appisoid df01 -t aes -s ev2 --param 0a --data 00ffffffff -> Disable failed auth counters for Desfire Light\n"
+                  "hf mfdes setconfig --appisoid df01 -t aes -s lrp --param 0a --data 00ffffffff -> Disable failed auth counters for Desfire Light via lrp channel");
 
     void *argtable[] = {
         arg_param_begin,
@@ -2583,8 +2050,9 @@ static int CmdHF14ADesSetConfiguration(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID of application for some parameters (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0("p",  "param",   "<HEX 1 byte>", "Parameter id (HEX 1 byte)"),
         arg_str0("d",  "data",    "<data HEX>", "Data for parameter (HEX 1..30 bytes)"),
         arg_param_end
@@ -2594,26 +2062,25 @@ static int CmdHF14ADesSetConfiguration(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMEncrypted, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMEncrypted, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t paramid = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 0, &paramid, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Parameter ID must have 1 bytes length");
+    if (CLIGetUint32Hex(ctx, 13, 0, &paramid, NULL, 1, "Parameter ID must have 1 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint8_t param[250] = {0};
     int paramlen = sizeof(param);
-    CLIGetHexWithReturn(ctx, 13, param, &paramlen);
+    CLIGetHexWithReturn(ctx, 14, param, &paramlen);
     if (paramlen == 0) {
         PrintAndLogEx(ERR, "Parameter must have a data.");
         CLIParserFree(ctx);
@@ -2629,15 +2096,16 @@ static int CmdHF14ADesSetConfiguration(const char *Cmd) {
     CLIParserFree(ctx);
 
     if (verbose) {
-        if (appid == 0x000000)
+        if (DesfireMFSelected(selectway, id))
             PrintAndLogEx(INFO, _CYAN_("PICC") " param ID: 0x%02x param[%d]: %s", paramid, paramlen, sprint_hex(param, paramlen));
         else
-            PrintAndLogEx(INFO, _CYAN_("Application %06x") " param ID: 0x%02x param[%d]: %s", appid, paramid, paramlen, sprint_hex(param, paramlen));
+            PrintAndLogEx(INFO, _CYAN_("%s %06x") " param ID: 0x%02x param[%d]: %s", DesfireSelectWayToStr(selectway), id, paramid, paramlen, sprint_hex(param, paramlen));
     }
 
-    res = DesfireSelectAndAuthenticate(&dctx, securechann, appid, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, false, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -2659,6 +2127,7 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
                   "Change crypto algorithm for PICC key is possible, but for APP keys crypto algorithm is set by createapp command and can't be changed wo application delete\n"
                   "\n"
                   "hf mfdes changekey --aid 123456 -> execute with default factory setup. change des key 0 in the app 123456 from 00..00 to 00..00\n"
+                  "hf mfdes changekey --appisoid df01 -t aes -s lrp --newkeyno 01 -> change key 01 via lrp channel"
                   "hf mfdes changekey -t des --newalgo aes --newkey 11223344556677889900112233445566 --newver a5 -> change card master key to AES one\n"
                   "hf mfdes changekey --aid 123456 -t aes --key 00000000000000000000000000000000 --newkey 11223344556677889900112233445566 -> change app master key\n"
                   "hf mfdes changekey --aid 123456 -t des -n 0 --newkeyno 1 --oldkey 5555555555555555 --newkey 1122334455667788 -> change key 1 with auth from key 0\n"
@@ -2675,8 +2144,9 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID of application (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "oldalgo", "<DES/2TDEA/3TDEA/AES>", "Old key crypto algorithm: DES, 2TDEA, 3TDEA, AES"),
         arg_str0(NULL, "oldkey",  "<old key>", "Old key (HEX 8(DES), 16(2TDEA or AES) or 24(3TDEA) bytes)"),
         arg_int0(NULL, "newkeyno", "<keyno>", "Key number for change"),
@@ -2690,17 +2160,18 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMEncrypted, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMEncrypted, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     int oldkeytype = dctx.keyType;
-    if (CLIGetOptionList(arg_get_str(ctx, 12), DesfireAlgoOpts, &oldkeytype)) {
+    if (CLIGetOptionList(arg_get_str(ctx, 13), DesfireAlgoOpts, &oldkeytype)) {
         CLIParserFree(ctx);
         return PM3_ESOFT;
     }
@@ -2708,7 +2179,7 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
     uint8_t oldkey[DESFIRE_MAX_KEY_SIZE] = {0};
     uint8_t keydata[200] = {0};
     int oldkeylen = sizeof(keydata);
-    CLIGetHexWithReturn(ctx, 13, keydata, &oldkeylen);
+    CLIGetHexWithReturn(ctx, 14, keydata, &oldkeylen);
     if (oldkeylen && oldkeylen != desfire_get_key_length(oldkeytype)) {
         PrintAndLogEx(ERR, "%s old key must have %d bytes length instead of %d.", CLIGetOptionListStr(DesfireAlgoOpts, oldkeytype), desfire_get_key_length(oldkeytype), oldkeylen);
         CLIParserFree(ctx);
@@ -2717,10 +2188,10 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
     if (oldkeylen)
         memcpy(oldkey, keydata, oldkeylen);
 
-    uint8_t newkeynum = arg_get_int_def(ctx, 14, 0);
+    uint8_t newkeynum = arg_get_int_def(ctx, 15, 0);
 
     int newkeytype = oldkeytype;
-    if (CLIGetOptionList(arg_get_str(ctx, 15), DesfireAlgoOpts, &newkeytype)) {
+    if (CLIGetOptionList(arg_get_str(ctx, 16), DesfireAlgoOpts, &newkeytype)) {
         CLIParserFree(ctx);
         return PM3_ESOFT;
     }
@@ -2728,7 +2199,7 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
     uint8_t newkey[DESFIRE_MAX_KEY_SIZE] = {0};
     memset(keydata, 0x00, sizeof(keydata));
     int keylen = sizeof(keydata);
-    CLIGetHexWithReturn(ctx, 16, keydata, &keylen);
+    CLIGetHexWithReturn(ctx, 17, keydata, &keylen);
     if (keylen && keylen != desfire_get_key_length(newkeytype)) {
         PrintAndLogEx(ERR, "%s new key must have %d bytes length instead of %d.", CLIGetOptionListStr(DesfireAlgoOpts, newkeytype), desfire_get_key_length(newkeytype), keylen);
         CLIParserFree(ctx);
@@ -2738,9 +2209,7 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
         memcpy(newkey, keydata, keylen);
 
     uint32_t newkeyver = 0x100;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 17, 0x100, &newkeyver, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Key version must have 1 bytes length");
+    if (CLIGetUint32Hex(ctx, 18, 0x100, &newkeyver, NULL, 1, "Key version must have 1 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -2754,14 +2223,14 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
         memcpy(oldkey, dctx.key, desfire_get_key_length(dctx.keyType));
     }
 
-    if (appid == 0x000000) {
-        PrintAndLogEx(WARNING, "Changing the root aid (0x000000)");
+    if (DesfireMFSelected(selectway, id)) {
+        if (verbose)
+            PrintAndLogEx(WARNING, "Changing the PICC level keys");
+        PrintAndLogEx(INFO, _CYAN_("Changing PICC key"));
+    } else {
+        PrintAndLogEx(INFO, _CYAN_("Changing key for ") _YELLOW_("%s"), DesfireWayIDStr(selectway, id));
     }
 
-    if (appid)
-        PrintAndLogEx(INFO, _CYAN_("Changing key in the application: ") _YELLOW_("%06x"), appid);
-    else
-        PrintAndLogEx(INFO, _CYAN_("Changing PICC key"));
     PrintAndLogEx(INFO, "auth key %d: %s [%d] %s", dctx.keyNum, CLIGetOptionListStr(DesfireAlgoOpts, dctx.keyType), desfire_get_key_length(dctx.keyType), sprint_hex(dctx.key, desfire_get_key_length(dctx.keyType)));
     PrintAndLogEx(INFO, "changing key number  " _YELLOW_("0x%02x") " (%d)", newkeynum, newkeynum);
     PrintAndLogEx(INFO, "old key: %s [%d] %s", CLIGetOptionListStr(DesfireAlgoOpts, oldkeytype), desfire_get_key_length(oldkeytype), sprint_hex(oldkey, desfire_get_key_length(oldkeytype)));
@@ -2769,14 +2238,15 @@ static int CmdHF14ADesChangeKey(const char *Cmd) {
     if (newkeyver < 0x100 || newkeytype == T_AES)
         PrintAndLogEx(INFO, "new key version: 0x%02x", newkeyver & 0x00);
 
-    res = DesfireSelectAndAuthenticate(&dctx, securechann, appid, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, false, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
     DesfireSetCommMode(&dctx, DCMEncryptedPlain);
-    res = DesfireChangeKey(&dctx, (appid == 0x000000) && (newkeynum == 0) && (dctx.keyNum == 0), newkeynum, newkeytype, newkeyver, newkey, oldkeytype, oldkey, true);
+    res = DesfireChangeKey(&dctx, (DesfireMFSelected(selectway, id)) && (newkeynum == 0) && (dctx.keyNum == 0), newkeynum, newkeytype, newkeyver, newkey, oldkeytype, oldkey, true);
     if (res == PM3_SUCCESS) {
         PrintAndLogEx(SUCCESS, "Change key " _GREEN_("ok") " ");
     } else {
@@ -2836,7 +2306,7 @@ static int CmdHF14ADesCreateApp(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "rawdata", "<rawdata hex>", "Rawdata that sends to command"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID for create. Mandatory. (3 hex bytes, big endian)"),
         arg_str0(NULL, "fid",     "<file id hex>", "ISO file ID. Forbidden values: 0000 3F00, 3FFF, FFFF. (2 hex bytes, big endian). If specified - enable iso file id over all the files in the app."),
@@ -2852,10 +2322,10 @@ static int CmdHF14ADesCreateApp(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 12, &securechann, DCMMACed, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 12, 0, &securechann, DCMMACed, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -2866,10 +2336,8 @@ static int CmdHF14ADesCreateApp(const char *Cmd) {
     CLIGetHexWithReturn(ctx, 11, rawdata, &rawdatalen);
 
     uint32_t fileid = 0x0000;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 13, 0x0000, &fileid, 2, true);
-    bool fileidpresent = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "ISO file ID must have 2 bytes length");
+    bool fileidpresent = false;
+    if (CLIGetUint32Hex(ctx, 13, 0x0000, &fileid, &fileidpresent, 2, "ISO file ID must have 2 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -2879,18 +2347,14 @@ static int CmdHF14ADesCreateApp(const char *Cmd) {
     CLIGetStrWithReturn(ctx, 14, dfname, &dfnamelen);
 
     uint32_t ks1 = 0x0f;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 15, 0x0f, &ks1, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Key settings 1 must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 15, 0x0f, &ks1, NULL, 1, "Key settings 1 must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint32_t ks2 = 0x0e;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 16, 0x0e, &ks2, 1, true);
-    bool ks2present = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Key settings 2 must have 1 byte length");
+    bool ks2present = false;
+    if (CLIGetUint32Hex(ctx, 16, 0x0e, &ks2, &ks2present, 1, "Key settings 2 must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -2954,8 +2418,7 @@ static int CmdHF14ADesCreateApp(const char *Cmd) {
 
         datalen = 5;
         if (fileidpresent || (data[4] & 0x20) != 0) {
-            data[5] = fileid & 0xff;
-            data[6] = (fileid >> 8) & 0xff;
+            Uint2byteToMemLe(&data[5], fileid);
             data[4] |= 0x20; // set bit FileID in the ks2
             memcpy(&data[7], dfname, dfnamelen);
             datalen = 7 + dfnamelen;
@@ -2970,7 +2433,7 @@ static int CmdHF14ADesCreateApp(const char *Cmd) {
         PrintAndLogEx(INFO, "Key Set 2    0x%02X", data[4]);
         PrintAndLogEx(INFO, "ISO file ID  %s", (data[4] & 0x20) ? "enabled" : "disabled");
         if ((data[4] & 0x20)) {
-            PrintAndLogEx(INFO, "FID           0x%02x%02x", data[6], data[5]);
+            PrintAndLogEx(INFO, "ISO file ID  0x%04x", MemLeToUint2byte(&data[5]));
             PrintAndLogEx(INFO, "DF Name[%02zu]  %s\n", strnlen((char *)&data[7], 16), (char *)&data[7]);
         }
         PrintKeySettings(data[3], data[4], true, true);
@@ -3007,7 +2470,7 @@ static int CmdHF14ADesDeleteApp(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID of delegated application (3 hex bytes, big endian)"),
         arg_param_end
     };
@@ -3016,10 +2479,10 @@ static int CmdHF14ADesDeleteApp(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMMACed, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3055,8 +2518,9 @@ static int CmdHF14ADesDeleteApp(const char *Cmd) {
 static int CmdHF14ADesGetUID(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfdes getuid",
-                  "Get UID from card. Get the real UID if the random UID bit is on and get the same UID as in anticollision if not. Master key needs to be provided. ",
-                  "hf mfdes getuid -> execute with default factory setup");
+                  "Get UID from card. Get the real UID if the random UID bit is on and get the same UID as in anticollision if not. Any card's key needs to be provided. ",
+                  "hf mfdes getuid -> execute with default factory setup\n"
+                  "hf mfdes getuid --appisoid df01 -t aes -s lrp -> for desfire lights default settings");
 
     void *argtable[] = {
         arg_param_begin,
@@ -3069,7 +2533,9 @@ static int CmdHF14ADesGetUID(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
+        arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, true);
@@ -3077,9 +2543,11 @@ static int CmdHF14ADesGetUID(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, &securechann, DCMEncrypted, NULL);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMEncrypted, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3088,9 +2556,10 @@ static int CmdHF14ADesGetUID(const char *Cmd) {
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticate(&dctx, securechann, 0x000000, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, false, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -3144,7 +2613,7 @@ static int CmdHF14ADesFormatPICC(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID of delegated application (3 hex bytes, big endian)"),
         arg_param_end
     };
@@ -3153,10 +2622,10 @@ static int CmdHF14ADesFormatPICC(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMMACed, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3201,7 +2670,7 @@ static int CmdHF14ADesGetFreeMem(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
@@ -3212,9 +2681,9 @@ static int CmdHF14ADesGetFreeMem(const char *Cmd) {
 
     bool noauth = arg_get_lit(ctx, 11);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, &securechann, (noauth) ? DCMPlain : DCMMACed, NULL);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, 0, &securechann, (noauth) ? DCMPlain : DCMMACed, NULL, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3262,7 +2731,7 @@ static int CmdHF14ADesChKeySettings(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
         arg_str0("d",  "data",    "<key settings HEX>", "Key settings (HEX 1 byte)"),
         arg_param_end
@@ -3272,23 +2741,17 @@ static int CmdHF14ADesChKeySettings(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMEncrypted, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMEncrypted, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t ksett32 = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 0x0f, &ksett32, 1, false);
-    if (res == 0) {
-        CLIParserFree(ctx);
-        return PM3_ESOFT;
-    }
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Key settings must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 12, 0x0f, &ksett32, NULL, 1, "Key settings must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -3327,7 +2790,8 @@ static int CmdHF14ADesGetKeyVersions(const char *Cmd) {
                   "Get key versions for card level or application level.",
                   "--keynum parameter: App level: key number. PICC level: 00..0d - keys count, 21..23 vc keys, default 0x00.\n"\
                   "hf mfdes getkeyversions --keynum 00 -> get picc master key version with default key/channel setup\n"\
-                  "hf mfdes getkeyversions --aid 123456 --keynum 0d -> get app 123456 all key versions with default key/channel setup");
+                  "hf mfdes getkeyversions --aid 123456 --keynum 0d -> get app 123456 all key versions with default key/channel setup\n"
+                  "hf mfdes getkeyversions --aid 123456 --keynum 0d --no-auth -> get key version without authentication");
 
     void *argtable[] = {
         arg_param_begin,
@@ -3340,50 +2804,44 @@ static int CmdHF14ADesGetKeyVersions(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "keynum",  "<key number HEX>", "Key number/count (HEX 1 byte). Default 0x00."),
         arg_str0(NULL, "keyset",  "<keyset num HEX>", "Keyset number (HEX 1 byte)"),
+        arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, true);
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
+    bool noauth = arg_get_lit(ctx, 15);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t keynum32 = 0x00;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 0x00, &keynum32, 1, false);
-    if (res == 0) {
-        keynum32 = 0x00;
-    }
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Key number must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 13, 0x00, &keynum32, NULL, 1, "Key number must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint32_t keysetnum32 = 0x00;
-    bool keysetpresent = true;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 13, 0x00, &keysetnum32, 1, false);
-    if (res == 0) {
-        keysetpresent = false;
-    }
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Keyset number must have 1 byte length");
+    bool keysetpresent = false;
+    if (CLIGetUint32Hex(ctx, 14, 0x00, &keysetnum32, &keysetpresent, 1, "Keyset number must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
-    if (keysetpresent && appid == 0x000000) {
+    if (keysetpresent && DesfireMFSelected(selectway, id)) {
         PrintAndLogEx(WARNING, "Keyset only at Application level");
         keysetpresent = false;
     }
@@ -3391,9 +2849,10 @@ static int CmdHF14ADesGetKeyVersions(const char *Cmd) {
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticate(&dctx, securechann, appid, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -3447,7 +2906,7 @@ static int CmdHF14ADesGetKeySettings(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
         arg_param_end
     };
@@ -3456,10 +2915,10 @@ static int CmdHF14ADesGetKeySettings(const char *Cmd) {
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMMACed, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3525,7 +2984,7 @@ static int CmdHF14ADesGetAIDs(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
@@ -3535,9 +2994,9 @@ static int CmdHF14ADesGetAIDs(const char *Cmd) {
     bool verbose = arg_get_lit(ctx, 2);
     bool noauth = arg_get_lit(ctx, 11);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, &securechann, DCMMACed, NULL);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, 0, &securechann, DCMMACed, NULL, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3591,7 +3050,7 @@ static int CmdHF14ADesGetAppNames(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
@@ -3601,9 +3060,9 @@ static int CmdHF14ADesGetAppNames(const char *Cmd) {
     bool verbose = arg_get_lit(ctx, 2);
     bool noauth = arg_get_lit(ctx, 11);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, &securechann, DCMMACed, NULL);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, 0, &securechann, DCMMACed, NULL, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3663,8 +3122,9 @@ static int CmdHF14ADesGetFileIDs(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
@@ -3672,12 +3132,13 @@ static int CmdHF14ADesGetFileIDs(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 12);
+    bool noauth = arg_get_lit(ctx, 13);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3686,9 +3147,10 @@ static int CmdHF14ADesGetFileIDs(const char *Cmd) {
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -3707,7 +3169,7 @@ static int CmdHF14ADesGetFileIDs(const char *Cmd) {
         for (int i = 0; i < buflen; i++)
             PrintAndLogEx(INFO, "File ID: %02x", buf[i]);
     } else {
-        PrintAndLogEx(INFO, "There is no files in the application %06x", appid);
+        PrintAndLogEx(INFO, "There is no files in the application %06x", id);
     }
 
     DropField();
@@ -3719,7 +3181,9 @@ static int CmdHF14ADesGetFileISOIDs(const char *Cmd) {
     CLIParserInit(&ctx, "hf mfdes getfileisoids",
                   "Get File IDs list from card. Master key needs to be provided or flag --no-auth set.",
                   "hf mfdes getfileisoids --aid 123456 -> execute with defaults from `default` command\n"
-                  "hf mfdes getfileisoids -n 0 -t des -k 0000000000000000 -f none --aid 123456 -> execute with default factory setup");
+                  "hf mfdes getfileisoids -n 0 -t des -k 0000000000000000 -f none --aid 123456 -> execute with default factory setup\n"
+                  "hf mfdes getfileisoids --appisoid df01 -> get iso file ids from Desfire Light with factory card settings\n"
+                  "hf mfdes getfileisoids --appisoid df01 -s lrp -t aes -> get iso file ids from Desfire Light via lrp channel with default key authentication");
 
     void *argtable[] = {
         arg_param_begin,
@@ -3732,8 +3196,9 @@ static int CmdHF14ADesGetFileISOIDs(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
@@ -3741,12 +3206,13 @@ static int CmdHF14ADesGetFileISOIDs(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 12);
+    bool noauth = arg_get_lit(ctx, 13);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -3755,9 +3221,10 @@ static int CmdHF14ADesGetFileISOIDs(const char *Cmd) {
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -3774,9 +3241,9 @@ static int CmdHF14ADesGetFileISOIDs(const char *Cmd) {
     if (buflen > 1) {
         PrintAndLogEx(INFO, "---- " _CYAN_("File ISO ID list") " ----");
         for (int i = 0; i < buflen; i += 2)
-            PrintAndLogEx(INFO, "File ID: %02x%02x", buf[i], buf[i + 1]);
+            PrintAndLogEx(INFO, "File ID: %04x", MemLeToUint2byte(&buf[i]));
     } else {
-        PrintAndLogEx(INFO, "There is no files in the application %06x", appid);
+        PrintAndLogEx(INFO, "There is no files in the application %06x", id);
     }
 
     DropField();
@@ -3788,6 +3255,7 @@ static int CmdHF14ADesGetFileSettings(const char *Cmd) {
     CLIParserInit(&ctx, "hf mfdes getfilesettings",
                   "Get File Settings from file from application. Master key needs to be provided or flag --no-auth set (depend on cards settings).",
                   "hf mfdes getfilesettings --aid 123456 --fid 01 -> execute with defaults from `default` command\n"
+                  "hf mfdes getfilesettings --appisoid df01 --fid 00 --no-auth -> get file settings with select by iso id\n"
                   "hf mfdes getfilesettings -n 0 -t des -k 0000000000000000 -f none --aid 123456 --fid 01 -> execute with default factory setup");
 
     void *argtable[] = {
@@ -3801,8 +3269,9 @@ static int CmdHF14ADesGetFileSettings(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte). default: 1"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
@@ -3811,21 +3280,20 @@ static int CmdHF14ADesGetFileSettings(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 13);
+    bool noauth = arg_get_lit(ctx, 14);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t fileid = 1;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 1, &fileid, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ID must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 13, 1, &fileid, NULL, 1, "File ID must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -3833,9 +3301,10 @@ static int CmdHF14ADesGetFileSettings(const char *Cmd) {
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -3850,7 +3319,7 @@ static int CmdHF14ADesGetFileSettings(const char *Cmd) {
     }
 
     if (verbose)
-        PrintAndLogEx(INFO, "app %06x file %02x settings[%zu]: %s", appid, fileid, buflen, sprint_hex(buf, buflen));
+        PrintAndLogEx(INFO, "%s file %02x settings[%zu]: %s", DesfireWayIDStr(selectway, id), fileid, buflen, sprint_hex(buf, buflen));
 
     DesfirePrintFileSettings(buf, buflen);
 
@@ -3870,32 +3339,24 @@ static int DesfireCreateFileParameters(
     size_t *datalen
 ) {
     *datalen = 0;
-    int res = 0;
 
     uint32_t fileid = 1;
     if (pfileid) {
-        res = arg_get_u32_hexstr_def_nlen(ctx, pfileid, 1, &fileid, 1, true);
-        if (res == 2) {
-            PrintAndLogEx(ERR, "File ID must have 1 byte length");
+        if (CLIGetUint32Hex(ctx, pfileid, 1, &fileid, NULL, 1, "File ID must have 1 byte length"))
             return PM3_EINVARG;
-        }
     }
 
     uint32_t isofileid = 0;
     if (pisofileid) {
-        res = arg_get_u32_hexstr_def_nlen(ctx, pisofileid, 0, &isofileid, 2, true);
-        if (res == 2) {
-            PrintAndLogEx(ERR, "ISO file ID must have 2 bytes length");
+        if (CLIGetUint32Hex(ctx, pisofileid, 0, &isofileid, NULL, 2, "ISO file ID must have 2 bytes length"))
             return PM3_EINVARG;
-        }
     }
 
     data[0] = fileid;
     *datalen = 1;
 
     if (isofileid > 0) {
-        data[1] = (isofileid >> 8) & 0xff;
-        data[2] = isofileid & 0xff;
+        Uint2byteToMemLe(&data[1], isofileid);
         *datalen += 2;
     }
 
@@ -3921,10 +3382,8 @@ static int DesfireCreateFileParameters(
     uint32_t frights = 0xeeee;
     bool userawfrights = false;
     if (frightsid) {
-        res = arg_get_u32_hexstr_def_nlen(ctx, frightsid, 0xeeee, &frights, 2, true);
-        userawfrights = (res == 1);
-        if (res == 2) {
-            PrintAndLogEx(ERR, "File rights must have 2 bytes length");
+        if (CLIGetUint32Hex(ctx, frightsid, 0xeeee, &frights, &userawfrights, 2, "File rights must have 2 bytes length")) {
+            CLIParserFree(ctx);
             return PM3_EINVARG;
         }
     }
@@ -3969,7 +3428,8 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
                   "Get File Settings from file from application. Master key needs to be provided or flag --no-auth set (depend on cards settings).",
                   "hf mfdes chfilesettings --aid 123456 --fid 01 --amode plain --rrights free --wrights free --rwrights free --chrights key0 -> change file settings app=123456, file=01 with defaults from `default` command\n"
                   "hf mfdes chfilesettings -n 0 -t des -k 0000000000000000 -f none --aid 123456 --fid 01 --rawdata 00EEEE -> execute with default factory setup\n"
-                  "hf mfdes chfilesettings --aid 123456 --fid 01 --rawdata 810000021f112f22 -> change file settings with additional rights for keys 1 and 2");
+                  "hf mfdes chfilesettings --aid 123456 --fid 01 --rawdata 810000021f112f22 -> change file settings with additional rights for keys 1 and 2\n"
+                  "hf mfdes chfilesettings --appisoid df01 --fid 00 --amode plain --rawrights eee0 -s lrp -t aes -> change file settings via lrp channel");
 
     void *argtable[] = {
         arg_param_begin,
@@ -3982,8 +3442,9 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_str0(NULL, "rawdata", "<file settings HEX>", "File settings (HEX > 5 bytes). Have priority over the other settings."),
         arg_str0(NULL, "amode",   "<plain/mac/encrypt>", "File access mode: plain/mac/encrypt"),
@@ -3999,12 +3460,13 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 20);
+    bool noauth = arg_get_lit(ctx, 21);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMEncrypted, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMEncrypted, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -4014,7 +3476,7 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
     uint8_t *settings = &data[1];
     size_t datalen = 0;
 
-    res = DesfireCreateFileParameters(ctx, 12, 0, 14, 15, 16, 17, 18, 19, data, &datalen);
+    res = DesfireCreateFileParameters(ctx, 13, 0, 15, 16, 17, 18, 19, 20, data, &datalen);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -4022,7 +3484,7 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
 
     uint8_t sdata[250] = {0};
     int sdatalen = sizeof(sdata);
-    CLIGetHexWithReturn(ctx, 13, sdata, &sdatalen);
+    CLIGetHexWithReturn(ctx, 14, sdata, &sdatalen);
     if (res) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
@@ -4045,9 +3507,10 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
 
     uint8_t fileid = data[0];
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -4056,7 +3519,7 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
 
     // check current file settings
     DesfireCommunicationMode commMode = dctx.commMode;
-    DesfireSetCommMode(&dctx, DCMPlain);
+    DesfireSetCommMode(&dctx, DCMMACed);
     res = DesfireGetFileSettings(&dctx, fileid, buf, &buflen);
     if (res == PM3_SUCCESS && buflen > 5) {
         uint8_t chright = 0;
@@ -4080,7 +3543,7 @@ static int CmdHF14ADesChFileSettings(const char *Cmd) {
 
     // print the new file settings
     if (verbose)
-        PrintAndLogEx(INFO, "app %06x file %02x settings[%zu]: %s", appid, fileid, datalen - 1, sprint_hex(settings, datalen - 1));
+        PrintAndLogEx(INFO, "%s file %02x settings[%zu]: %s", DesfireWayIDStr(selectway, id), fileid, datalen - 1, sprint_hex(settings, datalen - 1));
 
     DesfirePrintSetFileSettings(settings, datalen - 1);
 
@@ -4106,6 +3569,7 @@ static int CmdHF14ADesCreateFile(const char *Cmd) {
                   "--rawtype/--rawdata have priority over the other settings. and with these parameters you can create any file. file id comes from parameters, all the rest data must be in the --rawdata parameter\n"
                   "--rawrights have priority over the separate rights settings.\n"
                   "Key/mode/etc of the authentication depends on application settings\n"
+                  "hf mfdes createfile --aid 123456 --fid 01 --isofid 0001 --size 000010 -> create file with iso id. Authentication with defaults from `default` command\n"
                   "hf mfdes createfile --aid 123456 --fid 01 --rawtype 01 --rawdata 000100EEEE000100 -> create file via sending rawdata to the card. Can be used to create any type of file. Authentication with defaults from `default` command\n"
                   "hf mfdes createfile --aid 123456 --fid 01 --amode plain --rrights free --wrights free --rwrights free --chrights key0 -> create file app=123456, file=01 and mentioned rights with defaults from `default` command\n"
                   "hf mfdes createfile -n 0 -t des -k 0000000000000000 -f none --aid 123456 --fid 01 --rawtype 00 --rawdata 00EEEE000100 -> execute with default factory setup");
@@ -4121,7 +3585,7 @@ static int CmdHF14ADesCreateFile(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_str0(NULL, "isofid",  "<iso file id hex>", "ISO File ID (2 hex bytes)"),
@@ -4146,10 +3610,10 @@ static int CmdHF14ADesCreateFile(const char *Cmd) {
     bool backup = arg_get_lit(ctx, 24);
     uint8_t filetype = (backup) ? 0x01 : 0x00; // backup / standard data file
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMMACed, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -4171,10 +3635,8 @@ static int CmdHF14ADesCreateFile(const char *Cmd) {
     }
 
     uint32_t rawftype = 0x00;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 14, 0x00, &rawftype, 1, true);
-    bool useraw = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Raw file type must have 1 byte length");
+    bool useraw = false;
+    if (CLIGetUint32Hex(ctx, 14, 0x00, &rawftype, &useraw, 1, "Raw file type must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -4198,9 +3660,7 @@ static int CmdHF14ADesCreateFile(const char *Cmd) {
 
     if (useraw == false) {
         uint32_t filesize = 0;
-        res = arg_get_u32_hexstr_def_nlen(ctx, 23, 0, &filesize, 3, true);
-        if (res == 2) {
-            PrintAndLogEx(ERR, "File size must have 3 bytes length");
+        if (CLIGetUint32Hex(ctx, 23, 0, &filesize, NULL, 3, "File size must have 3 bytes length")) {
             CLIParserFree(ctx);
             return PM3_EINVARG;
         }
@@ -4263,7 +3723,7 @@ static int CmdHF14ADesCreateValueFile(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_str0(NULL, "amode",   "<plain/mac/encrypt>", "File access mode: plain/mac/encrypt"),
@@ -4287,10 +3747,10 @@ static int CmdHF14ADesCreateValueFile(const char *Cmd) {
 
     uint8_t filetype = 0x02; // value file
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMMACed, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -4312,25 +3772,19 @@ static int CmdHF14ADesCreateValueFile(const char *Cmd) {
     }
 
     uint32_t lowerlimit = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 20, 0, &lowerlimit, 4, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Lower limit value must have 4 bytes length");
+    if (CLIGetUint32Hex(ctx, 20, 0, &lowerlimit, NULL, 4, "Lower limit value must have 4 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint32_t upperlimit = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 21, 0, &upperlimit, 4, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Upper limit value must have 4 bytes length");
+    if (CLIGetUint32Hex(ctx, 21, 0, &upperlimit, NULL, 4, "Upper limit value must have 4 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint32_t value = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 22, 0, &value, 4, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Lower limit value must have 4 bytes length");
+    if (CLIGetUint32Hex(ctx, 22, 0, &value, NULL, 4, "Value must have 4 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -4395,7 +3849,7 @@ static int CmdHF14ADesCreateRecordFile(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_str0(NULL, "isofid",  "<iso file id hex>", "ISO File ID (2 hex bytes)"),
@@ -4420,10 +3874,10 @@ static int CmdHF14ADesCreateRecordFile(const char *Cmd) {
     bool cyclic = arg_get_lit(ctx, 23);
     uint8_t filetype = (cyclic) ? 0x04 : 0x03; // linear(03) / cyclic(04) record file
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
     uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, &securechann, DCMMACed, &appid, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -4445,17 +3899,13 @@ static int CmdHF14ADesCreateRecordFile(const char *Cmd) {
     }
 
     uint32_t size = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 21, 0, &size, 3, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Record size must have 3 bytes length");
+    if (CLIGetUint32Hex(ctx, 21, 0, &size, NULL, 3, "Record size must have 3 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint32_t maxrecord = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 22, 0, &maxrecord, 3, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Max number of records must have 3 bytes length");
+    if (CLIGetUint32Hex(ctx, 22, 0, &maxrecord, NULL, 3, "Max number of records must have 3 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -4499,9 +3949,13 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
                   "Create Transaction MAC file in the application. Application master key needs to be provided or flag --no-auth set (depend on application settings).",
                   "--rawrights have priority over the separate rights settings.\n"
                   "Key/mode/etc of the authentication depends on application settings\n"
-                  "hf mfdes createmacfile --aid 123456 --fid 01 --mackey --rawrights 1F30 00112233445566778899aabbccddeeff --mackeyver 01 -> create transaction mac file with parameters. Rights from default. Authentication with defaults from `default` command\n"
+                  "Write right should be always 0xF. Read-write right should be 0xF if you not need to submit CommitReaderID command each time transaction starts\n"
+                  "\n"
+                  "hf mfdes createmacfile --aid 123456 --fid 01 --rawrights 0FF0 --mackey 00112233445566778899aabbccddeeff --mackeyver 01 -> create transaction mac file with parameters. Rights from default. Authentication with defaults from `default` command\n"
                   "hf mfdes createmacfile --aid 123456 --fid 01 --amode plain --rrights free --wrights deny --rwrights free --chrights key0 --mackey 00112233445566778899aabbccddeeff -> create file app=123456, file=01, with key, and mentioned rights with defaults from `default` command\n"
-                  "hf mfdes createmacfile -n 0 -t des -k 0000000000000000 -f none --aid 123456 --fid 01 -> execute with default factory setup. key and keyver == 0x00..00");
+                  "hf mfdes createmacfile -n 0 -t des -k 0000000000000000 -f none --aid 123456 --fid 01 -> execute with default factory setup. key and keyver == 0x00..00\n"
+                  "hf mfdes createmacfile --appisoid df01 --fid 0f -s lrp -t aes --rawrights 0FF0 --mackey 00112233445566778899aabbccddeeff --mackeyver 01 -> create transaction mac file via lrp channel\n"
+                  "hf mfdes createmacfile --appisoid df01 --fid 0f -s lrp -t aes --rawrights 0F10 --mackey 00112233445566778899aabbccddeeff --mackeyver 01 -> create transaction mac file via lrp channel with CommitReaderID command enable");
 
     void *argtable[] = {
         arg_param_begin,
@@ -4514,8 +3968,9 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
         arg_str0("i",  "kdfi",      "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",     "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",     "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",    "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",    "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",       "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "fid",       "<file id hex>", "File ID (1 hex byte)"),
         arg_str0(NULL, "amode",     "<plain/mac/encrypt>", "File access mode: plain/mac/encrypt"),
         arg_str0(NULL, "rawrights", "<access rights HEX>", "Access rights for file (HEX 2 byte) R/W/RW/Chg, 0x0 - 0xD Key, 0xE Free, 0xF Denied"),
@@ -4532,20 +3987,21 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 19);
+    bool noauth = arg_get_lit(ctx, 20);
 
     uint8_t filetype = 0x05; // transaction mac file
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMEncrypted, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMEncrypted, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
-    if (appid == 0x000000) {
+    if (DesfireMFSelected(selectway, id)) {
         PrintAndLogEx(ERR, "Can't create files at card level.");
         CLIParserFree(ctx);
         return PM3_EINVARG;
@@ -4554,7 +4010,7 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
     uint8_t data[250] = {0};
     size_t datalen = 0;
 
-    res = DesfireCreateFileParameters(ctx, 12, 0, 13, 14, 15, 16, 17, 18, data, &datalen);
+    res = DesfireCreateFileParameters(ctx, 13, 0, 14, 15, 16, 17, 18, 19, data, &datalen);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -4562,7 +4018,7 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
 
     uint8_t sdata[250] = {0};
     int sdatalen = sizeof(sdata);
-    CLIGetHexWithReturn(ctx, 20, sdata, &sdatalen);
+    CLIGetHexWithReturn(ctx, 21, sdata, &sdatalen);
     if (sdatalen != 0 && sdatalen != 16) {
         PrintAndLogEx(ERR, "AES-128 key must be 16 bytes instead of %d.", sdatalen);
         CLIParserFree(ctx);
@@ -4570,9 +4026,7 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
     }
 
     uint32_t keyver = 0x00;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 21, 0x00, &keyver, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Key version must be 1 byte length");
+    if (CLIGetUint32Hex(ctx, 22, 0x00, &keyver, NULL, 1, "Key version must have 1 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -4588,16 +4042,17 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
     data[datalen] = keyver & 0xff;
     datalen++;
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
     if (verbose)
-        PrintAndLogEx(INFO, "App: %06x. File num: 0x%02x type: 0x%02x data[%zu]: %s", appid, data[0], filetype, datalen, sprint_hex(data, datalen));
-    DesfirePrintCreateFileSettings(filetype, data, datalen);
+        PrintAndLogEx(INFO, "%s. File num: 0x%02x type: 0x%02x data[%zu]: %s", DesfireWayIDStr(selectway, id), data[0], filetype, datalen, sprint_hex(data, datalen));
 
+    DesfirePrintCreateFileSettings(filetype, data, datalen);
 
     res = DesfireCreateFile(&dctx, filetype, data, datalen, true);
     if (res != PM3_SUCCESS) {
@@ -4606,7 +4061,7 @@ static int CmdHF14ADesCreateTrMACFile(const char *Cmd) {
         return PM3_ESOFT;
     }
 
-    PrintAndLogEx(SUCCESS, "%s file %02x in the app %06x created " _GREEN_("successfully"), GetDesfireFileType(filetype), data[0], appid);
+    PrintAndLogEx(SUCCESS, "%s file %02x in the %s created " _GREEN_("successfully"), GetDesfireFileType(filetype), data[0], DesfireWayIDStr(selectway, id));
 
     DropField();
     return PM3_SUCCESS;
@@ -4616,7 +4071,8 @@ static int CmdHF14ADesDeleteFile(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfdes deletefile",
                   "Delete file from application. Master key needs to be provided or flag --no-auth set (depend on cards settings).",
-                  "hf mfdes deletefile --aid 123456 --fid 01 -> delete file for: app=123456, file=01 with defaults from `default` command");
+                  "hf mfdes deletefile --aid 123456 --fid 01 -> delete file for: app=123456, file=01 with defaults from `default` command\n"
+                  "hf mfdes deletefile --appisoid df01 --fid 0f -s lrp -t aes -> delete file for lrp channel");
 
     void *argtable[] = {
         arg_param_begin,
@@ -4629,8 +4085,9 @@ static int CmdHF14ADesDeleteFile(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
@@ -4639,21 +4096,20 @@ static int CmdHF14ADesDeleteFile(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 13);
+    bool noauth = arg_get_lit(ctx, 14);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t fnum = 1;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 1, &fnum, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ID must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 13, 1, &fnum, NULL, 1, "File ID must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -4666,9 +4122,10 @@ static int CmdHF14ADesDeleteFile(const char *Cmd) {
         return PM3_EINVARG;
     }
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -4679,7 +4136,7 @@ static int CmdHF14ADesDeleteFile(const char *Cmd) {
         return PM3_ESOFT;
     }
 
-    PrintAndLogEx(SUCCESS, "File %02x in the app %06x deleted " _GREEN_("successfully"), fnum, appid);
+    PrintAndLogEx(SUCCESS, "File %02x in the %s deleted " _GREEN_("successfully"), fnum, DesfireWayIDStr(selectway, id));
 
     DropField();
     return PM3_SUCCESS;
@@ -4691,7 +4148,9 @@ static int CmdHF14ADesValueOperations(const char *Cmd) {
                   "Get File Settings from file from application. Master key needs to be provided or flag --no-auth set (depend on cards settings).",
                   "hf mfdes value --aid 123456 --fid 01  -> get value app=123456, file=01 with defaults from `default` command\n"
                   "hf mfdes value --aid 123456 --fid 01 --op credit -d 00000001 -> credit value app=123456, file=01 with defaults from `default` command\n"
-                  "hf mfdes value -n 0 -t des -k 0000000000000000 -f none --aid 123456 --fid 01 -> get value with default factory setup");
+                  "hf mfdes value -n 0 -t des -k 0000000000000000 -f none --aid 123456 --fid 01 -> get value with default factory setup\n"
+                  "hf mfdes val --appisoid df01 --fid 03 -s lrp -t aes -n 1 --op credit --d 00000001 -m encrypt -> credit value in the lrp encrypted mode\n"
+                  "hf mfdes val --appisoid df01 --fid 03 -s lrp -t aes -n 1 --op get -m plain -> get value in plain (nevertheless of mode) works for desfire light (look SetConfiguration option 0x09)");
 
     void *argtable[] = {
         arg_param_begin,
@@ -4704,8 +4163,9 @@ static int CmdHF14ADesValueOperations(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_str0("o",  "op",      "<get/credit/limcredit/debit/clear>", "Operation: get(default)/credit/limcredit(limited credit)/debit/clear. Operation clear: get-getopt-debit to min value"),
         arg_str0("d",  "data",    "<value HEX>", "Value for operation (HEX 4 bytes)"),
@@ -4716,35 +4176,32 @@ static int CmdHF14ADesValueOperations(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 15);
+    bool noauth = arg_get_lit(ctx, 16);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t fileid = 1;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 1, &fileid, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ID must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 13, 1, &fileid, NULL, 1, "File ID must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     int op = MFDES_GET_VALUE;
-    if (CLIGetOptionList(arg_get_str(ctx, 13), DesfireValueFileOperOpts, &op)) {
+    if (CLIGetOptionList(arg_get_str(ctx, 14), DesfireValueFileOperOpts, &op)) {
         CLIParserFree(ctx);
         return PM3_ESOFT;
     }
 
     uint32_t value = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 14, 0, &value, 4, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Value must have 4 byte length");
+    if (CLIGetUint32Hex(ctx, 15, 0, &value, NULL, 4, "Value must have 4 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -4752,14 +4209,19 @@ static int CmdHF14ADesValueOperations(const char *Cmd) {
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    // iso chaining works in the lrp mode
+    dctx.isoChaining |= (dctx.secureChannel == DACLRP);
+
+    // select
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
     if (verbose)
-        PrintAndLogEx(INFO, "app %06x file %02x operation: %s value: 0x%08x", appid, fileid, CLIGetOptionListStr(DesfireValueFileOperOpts, op), value);
+        PrintAndLogEx(INFO, "%s file %02x operation: %s value: 0x%08x", DesfireWayIDStr(selectway, id), fileid, CLIGetOptionListStr(DesfireValueFileOperOpts, op), value);
 
     if (op != 0xff) {
         res = DesfireValueFileOperations(&dctx, fileid, op, &value);
@@ -4768,16 +4230,21 @@ static int CmdHF14ADesValueOperations(const char *Cmd) {
             DropField();
             return PM3_ESOFT;
         }
+        if (verbose)
+            PrintAndLogEx(INFO, "Operation %s " _GREEN_("OK"), CLIGetOptionListStr(DesfireValueFileOperOpts, op));
 
         if (op == MFDES_GET_VALUE) {
             PrintAndLogEx(SUCCESS, "Value: " _GREEN_("%d (0x%08x)"), value, value);
         } else {
+            DesfireSetCommMode(&dctx, DCMMACed);
             res = DesfireCommitTransaction(&dctx, false, 0);
             if (res != PM3_SUCCESS) {
                 PrintAndLogEx(ERR, "Desfire CommitTransaction command " _RED_("error") ". Result: %d", res);
                 DropField();
                 return PM3_ESOFT;
             }
+            if (verbose)
+                PrintAndLogEx(INFO, "Commit " _GREEN_("OK"));
 
             PrintAndLogEx(SUCCESS, "Value changed " _GREEN_("successfully"));
         }
@@ -4828,6 +4295,7 @@ static int CmdHF14ADesValueOperations(const char *Cmd) {
             if (verbose)
                 PrintAndLogEx(INFO, "Value debited");
 
+            DesfireSetCommMode(&dctx, DCMMACed);
             res = DesfireCommitTransaction(&dctx, false, 0);
             if (res != PM3_SUCCESS) {
                 PrintAndLogEx(ERR, "Desfire CommitTransaction command " _RED_("error") ". Result: %d", res);
@@ -4853,7 +4321,8 @@ static int CmdHF14ADesClearRecordFile(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfdes clearrecfile",
                   "Clear record file. Master key needs to be provided or flag --no-auth set (depend on cards settings).",
-                  "hf mfdes clearrecfile --aid 123456 --fid 01 -> clear record file for: app=123456, file=01 with defaults from `default` command");
+                  "hf mfdes clearrecfile --aid 123456 --fid 01 -> clear record file for: app=123456, file=01 with defaults from `default` command\n"
+                  "hf mfdes clearrecfile --appisoid df01 --fid 01 -s lrp -t aes -n 3 -> clear record file for lrp channel with key number 3");
 
     void *argtable[] = {
         arg_param_begin,
@@ -4866,8 +4335,9 @@ static int CmdHF14ADesClearRecordFile(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID for clearing (1 hex byte)"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
@@ -4876,21 +4346,20 @@ static int CmdHF14ADesClearRecordFile(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 13);
+    bool noauth = arg_get_lit(ctx, 14);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t fnum = 1;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 1, &fnum, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ID must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 13, 1, &fnum, NULL, 1, "File ID must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -4903,9 +4372,10 @@ static int CmdHF14ADesClearRecordFile(const char *Cmd) {
         return PM3_EINVARG;
     }
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
@@ -4916,13 +4386,27 @@ static int CmdHF14ADesClearRecordFile(const char *Cmd) {
         return PM3_ESOFT;
     }
 
-    PrintAndLogEx(SUCCESS, "File %02x in the app %06x cleared " _GREEN_("successfully"), fnum, appid);
+    if (verbose)
+        PrintAndLogEx(INFO, "File cleared");
+
+    DesfireSetCommMode(&dctx, DCMMACed);
+    res = DesfireCommitTransaction(&dctx, false, 0);
+    if (res != PM3_SUCCESS) {
+        PrintAndLogEx(ERR, "Desfire CommitTransaction command " _RED_("error") ". Result: %d", res);
+        DropField();
+        return PM3_ESOFT;
+    }
+
+    if (verbose)
+        PrintAndLogEx(INFO, "Transaction commited");
+
+    PrintAndLogEx(SUCCESS, "File %02x in the %s cleared " _GREEN_("successfully"), fnum, DesfireWayIDStr(selectway, id));
 
     DropField();
     return PM3_SUCCESS;
 }
 
-static int DesfileReadISOFileAndPrint(DesfireContext *dctx, bool select_current_file, uint8_t fnum, uint16_t fisoid, int filetype, uint32_t offset, uint32_t length, bool noauth, bool verbose) {
+static int DesfileReadISOFileAndPrint(DesfireContext_t *dctx, bool select_current_file, uint8_t fnum, uint16_t fisoid, int filetype, uint32_t offset, uint32_t length, bool noauth, bool verbose) {
 
     if (filetype == RFTAuto) {
         PrintAndLogEx(ERR, "ISO mode needs to specify file type");
@@ -5016,18 +4500,21 @@ static int DesfileReadISOFileAndPrint(DesfireContext *dctx, bool select_current_
     return PM3_SUCCESS;
 }
 
-static int DesfileReadFileAndPrint(DesfireContext *dctx, uint8_t fnum, int filetype, uint32_t offset, uint32_t length, bool noauth, bool verbose) {
+static int DesfileReadFileAndPrint(DesfireContext_t *dctx, uint8_t fnum, int filetype, uint32_t offset, uint32_t length, uint32_t maxdatafilelength, bool noauth, bool verbose) {
     int res = 0;
     // length of record for record file
     size_t reclen = 0;
 
+    // iso chaining works in the lrp mode
+    dctx->isoChaining |= (dctx->secureChannel == DACLRP);
+
     // get file settings
     if (filetype == RFTAuto) {
-        FileSettingsS fsettings;
+        FileSettings_t fsettings;
 
         DesfireCommunicationMode commMode = dctx->commMode;
         DesfireSetCommMode(dctx, DCMMACed);
-        res = DesfireGetFileSettingsStruct(dctx, fnum, &fsettings);
+        res = DesfireFileSettingsStruct(dctx, fnum, &fsettings);
         DesfireSetCommMode(dctx, commMode);
 
         if (res == PM3_SUCCESS) {
@@ -5056,12 +4543,28 @@ static int DesfileReadFileAndPrint(DesfireContext *dctx, uint8_t fnum, int filet
                 }
             }
 
-            DesfireSetCommMode(dctx, fsettings.commMode);
+            commMode = fsettings.commMode;
+            // lrp needs to point exact mode
+            if (dctx->secureChannel == DACLRP) {
+                // read right == free
+                if (fsettings.rAccess == 0xe)
+                    commMode = DCMPlain;
+                // get value access == free
+                if (filetype == RFTValue && (fsettings.limitedCredit & 0x02) != 0)
+                    commMode = DCMPlain;
+            }
+
+            // calc max length
+            if (filetype == RFTData && maxdatafilelength && (maxdatafilelength < fsettings.fileSize)) {
+                length = maxdatafilelength;
+            }
+
+            DesfireSetCommMode(dctx, commMode);
 
             if (fsettings.fileCommMode != 0 && noauth)
                 PrintAndLogEx(WARNING, "File needs communication mode `%s` but there is no authentication", CLIGetOptionListStr(DesfireCommunicationModeOpts, fsettings.commMode));
 
-            if ((fsettings.rAccess < 0x0e && fsettings.rAccess != dctx->keyNum) || (fsettings.rwAccess < 0x0e && fsettings.rwAccess != dctx->keyNum))
+            if ((fsettings.rAccess < 0x0e && fsettings.rAccess != dctx->keyNum) && (fsettings.rwAccess < 0x0e && fsettings.rwAccess != dctx->keyNum))
                 PrintAndLogEx(WARNING, "File needs to be authenticated with key 0x%02x or 0x%02x but current authentication key is 0x%02x", fsettings.rAccess, fsettings.rwAccess, dctx->keyNum);
 
             if (fsettings.rAccess == 0x0f && fsettings.rwAccess == 0x0f)
@@ -5163,7 +4666,17 @@ static int DesfileReadFileAndPrint(DesfireContext *dctx, uint8_t fnum, int filet
                 print_buffer_with_offset(resp, resplen, offset, true);
             } else {
                 uint32_t cnt = MemLeToUint4byte(&resp[0]);
-                PrintAndLogEx(SUCCESS, "Transaction counter: %d (0x%08x)", cnt, cnt);
+                transactionCounter = cnt;
+                if (dctx->secureChannel != DACLRP) {
+                    PrintAndLogEx(SUCCESS, "Transaction counter: %d (0x%08x)", cnt, cnt);
+                } else {
+                    // For composing TMC the two subparts are concatenated as follows: actTMC || sesTMC. Both subparts are represented LSB first.
+                    // MF2DLHX0.pdf, 10.3.2.1 Transaction MAC Counter, page 41
+                    uint32_t actTMC = MemLeToUint2byte(&resp[0]);
+                    uint32_t sessTMC = MemLeToUint2byte(&resp[2]);
+                    PrintAndLogEx(SUCCESS, "Session tr counter : %d (0x%04x)", sessTMC, sessTMC);
+                    PrintAndLogEx(SUCCESS, "Actual tr counter  : %d (0x%04x)", actTMC, actTMC);
+                }
                 PrintAndLogEx(SUCCESS, "Transaction MAC    : %s", sprint_hex(&resp[4], 8));
             }
         } else {
@@ -5188,7 +4701,9 @@ static int CmdHF14ADesReadData(const char *Cmd) {
                   "hf mfdes read --aid 123456 --fileisoid 1000 --type data -c iso -> read file via ISO channel: app=123456, iso id=1000, offset=0. Select via native ISO wrapper\n"
                   "hf mfdes read --appisoid 0102 --fileisoid 1000 --type data -c iso -> read file via ISO channel: app iso id=0102, iso id=1000, offset=0. Select via ISO commands\n"
                   "hf mfdes read --appisoid 0102 --fileisoid 1100 --type record -c iso --offset 000005 --length 000001 -> get one record (number 5) from file 1100 via iso commands\n"
-                  "hf mfdes read --appisoid 0102 --fileisoid 1100 --type record -c iso --offset 000005 --length 000000 -> get all record (from 5 to 1) from file 1100 via iso commands");
+                  "hf mfdes read --appisoid 0102 --fileisoid 1100 --type record -c iso --offset 000005 --length 000000 -> get all record (from 5 to 1) from file 1100 via iso commands\n"
+                  "hf mfdes read --appisoid df01 --fid 00 -s lrp -t aes --length 000010 -> read via lrp channel\n"
+                  "hf mfdes read --appisoid df01 --fid 00 -s ev2 -t aes --length 000010 --isochain -> read Desfire Light via ev2 channel");
 
     void *argtable[] = {
         arg_param_begin,
@@ -5201,15 +4716,16 @@ static int CmdHF14ADesReadData(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_str0(NULL, "type",    "<auto/data/value/record/mac>", "File Type auto/data(Standard/Backup)/value/record(linear/cyclic)/mac). Auto - check file settings and then read. Default: auto"),
         arg_str0("o", "offset",   "<hex>", "File Offset (3 hex bytes, big endian). For records - record number (0 - lastest record). Default 0"),
         arg_str0("l", "length",   "<hex>", "Length to read (3 hex bytes, big endian -> 000000 = Read all data). For records - records count (0 - all). Default 0."),
-        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian). Works only for ISO read commands."),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_str0(NULL, "fileisoid", "<isoid hex>", "File ISO ID (ISO DF ID) (2 hex bytes, big endian). Works only for ISO read commands."),
+        arg_lit0(NULL, "isochain", "use iso chaining commands. Switched on by default if secure channel = lrp"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
@@ -5218,19 +4734,18 @@ static int CmdHF14ADesReadData(const char *Cmd) {
     bool verbose = arg_get_lit(ctx, 2);
     bool noauth = arg_get_lit(ctx, 13);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 17, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t fnum = 1;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 1, &fnum, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ID must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 12, 1, &fnum, NULL, 1, "File ID must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -5242,38 +4757,25 @@ static int CmdHF14ADesReadData(const char *Cmd) {
     }
 
     uint32_t offset = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 15, 0, &offset, 3, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Offset must have 3 byte length");
+    if (CLIGetUint32Hex(ctx, 15, 0, &offset, NULL, 3, "Offset must have 3 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint32_t length = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 16, 0, &length, 3, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Length must have 3 byte length");
-        CLIParserFree(ctx);
-        return PM3_EINVARG;
-    }
-
-    uint32_t appisoid = 0x0000;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 17, 0x0000, &appisoid, 2, true);
-    bool isoidpresent = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Application ISO ID (for EF) must have 2 bytes length");
+    if (CLIGetUint32Hex(ctx, 16, 0, &length, NULL, 3, "Length parameter must have 3 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
     uint32_t fileisoid = 0x0000;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 18, 0x0000, &fileisoid, 2, true);
-    bool fileisoidpresent = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ISO ID (for DF) must have 2 bytes length");
+    bool fileisoidpresent = false;
+    if (CLIGetUint32Hex(ctx, 18, 0x0000, &fileisoid, &fileisoidpresent, 2, "File ISO ID (for DF) must have 2 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
+
+    dctx.isoChaining = arg_get_lit(ctx, 19);
 
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
@@ -5283,22 +4785,15 @@ static int CmdHF14ADesReadData(const char *Cmd) {
         return PM3_EINVARG;
     }
 
-    if (!isoidpresent) {
-        res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
-        if (res != PM3_SUCCESS) {
-            DropField();
-            return res;
-        }
-    } else {
-        res = DesfireSelectAndAuthenticateISO(&dctx, securechann, (appid != 0), appid, appisoid, fileisoid, noauth, verbose);
-        if (res != PM3_SUCCESS) {
-            DropField();
-            return res;
-        }
+    res = DesfireSelectAndAuthenticateW(&dctx, securechann, selectway, id, fileisoidpresent, fileisoid, noauth, verbose);
+    if (res != PM3_SUCCESS) {
+        DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
+        return res;
     }
 
     if (dctx.cmdSet != DCCISO)
-        res = DesfileReadFileAndPrint(&dctx, fnum, op, offset, length, noauth, verbose);
+        res = DesfileReadFileAndPrint(&dctx, fnum, op, offset, length, 0, noauth, verbose);
     else
         res = DesfileReadISOFileAndPrint(&dctx, fileisoidpresent, fnum, fileisoid, op, offset, length, noauth, verbose);
 
@@ -5306,7 +4801,7 @@ static int CmdHF14ADesReadData(const char *Cmd) {
     return res;
 }
 
-static int DesfileWriteISOFile(DesfireContext *dctx, bool select_current_file, uint8_t fnum, uint16_t fisoid, int filetype, uint32_t offset, uint8_t *data, uint32_t datalen, bool verbose) {
+static int DesfileWriteISOFile(DesfireContext_t *dctx, bool select_current_file, uint8_t fnum, uint16_t fisoid, int filetype, uint32_t offset, uint8_t *data, uint32_t datalen, bool verbose) {
 
     if (filetype == RFTAuto) {
         PrintAndLogEx(ERR, "ISO mode needs to specify file type");
@@ -5361,17 +4856,21 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfdes write",
                   "Write data from file. Key needs to be provided or flag --no-auth set (depend on file settings).",
+                  "In the mode with CommitReaderID to decode previous reader id command needs to read transaction counter via dump/read command and specify --trkey\n"
+                  "\n"
                   "hf mfdes write --aid 123456 --fid 01 -d 01020304 -> write file: app=123456, file=01, offset=0, get file type from card. use default channel settings from `default` command\n"
                   "hf mfdes write --aid 123456 --fid 01 --type data -d 01020304 --0ffset 000100 -> write data to std file with offset 0x100\n"
                   "hf mfdes write --aid 123456 --fid 01 --type data -d 01020304 --commit -> write data to backup file with commit\n"
                   "hf mfdes write --aid 123456 --fid 01 --type value -d 00000001 -> increment value file\n"
                   "hf mfdes write --aid 123456 --fid 01 --type value -d 00000001 --debit -> decrement value file\n"
-                  "hf mfdes write --aid 123456 --fid 01 -d 01020304 -> write data to record file with `auto` type\n"
+                  "hf mfdes write --aid 123456 --fid 01 -d 01020304 -> write data to file with `auto` type\n"
                   "hf mfdes write --aid 123456 --fid 01 --type record -d 01020304 -> write data to record file\n"
                   "hf mfdes write --aid 123456 --fid 01 --type record -d 01020304 --updaterec 0 -> update record in the record file. record 0 - lastest record.\n"
                   "hf mfdes write --aid 123456 --fid 01 --type record --offset 000000 -d 11223344 -> write record to record file. use default channel settings from `default` command\n"
                   "hf mfdes write --appisoid 1234 --fileisoid 1000 --type data -c iso -d 01020304 -> write data to std/backup file via iso commandset\n"
-                  "hf mfdes write --appisoid 1234 --fileisoid 2000 --type record -c iso -d 01020304 -> aend record to record file via iso commandset");
+                  "hf mfdes write --appisoid 1234 --fileisoid 2000 --type record -c iso -d 01020304 -> send record to record file via iso commandset\n"
+                  "hf mfdes write --aid 123456 --fid 01 -d 01020304 --readerid 010203 -> write data to file with CommitReaderID command before write and CommitTransaction after write\n"
+                  "hf mfdes write --appisoid df01 --fid 04 -d 01020304 --trkey 00112233445566778899aabbccddeeff --readerid 5532 -t aes -s lrp -> advanced CommitReaderID via lrp channel sample");
 
     void *argtable[] = {
         arg_param_begin,
@@ -5384,7 +4883,7 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
         arg_str0(NULL, "fid",     "<file id hex>", "File ID (1 hex byte)"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
@@ -5394,8 +4893,10 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
         arg_lit0(NULL, "debit",   "use for value file debit operation instead of credit"),
         arg_lit0(NULL, "commit",  "commit needs for backup file only. For the other file types and in the `auto` mode - command set it automatically."),
         arg_int0(NULL, "updaterec", "<record number dec>", "Record number for update record command. Updates record instead of write. Lastest record - 0"),
-        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian). Works only for ISO read commands."),
-        arg_str0(NULL, "fileisoid", "<isoid hex>", "File ISO ID (ISO DF ID) (2 hex bytes, big endian). Works only for ISO read commands."),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
+        arg_str0(NULL, "fileisoid", "<isoid hex>", "File ISO ID (ISO DF ID) (2 hex bytes, big endian). Works only for ISO write commands."),
+        arg_str0(NULL, "readerid", "<hex>", "reader id for CommitReaderID command. If present - the command issued before write command."),
+        arg_str0(NULL, "trkey",   "<hex>", "key for decode previous reader id."),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
@@ -5404,19 +4905,18 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
     bool verbose = arg_get_lit(ctx, 2);
     bool noauth = arg_get_lit(ctx, 13);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMPlain, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 20, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
     uint32_t fnum = 1;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 12, 1, &fnum, 1, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ID must have 1 byte length");
+    if (CLIGetUint32Hex(ctx, 12, 1, &fnum, NULL, 1, "File ID must have 1 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -5428,9 +4928,7 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
     }
 
     uint32_t offset = 0;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 15, 0, &offset, 3, true);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Offset must have 3 byte length");
+    if (CLIGetUint32Hex(ctx, 15, 0, &offset, NULL, 3, "Offset must have 3 byte length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -5449,20 +4947,27 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
 
     int updaterecno = arg_get_int_def(ctx, 19, -1);
 
-    uint32_t appisoid = 0x0000;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 20, 0x0000, &appisoid, 2, true);
-    bool isoidpresent = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "Application ISO ID (for EF) must have 2 bytes length");
+    uint32_t fileisoid = 0x0000;
+    bool fileisoidpresent = false;
+    if (CLIGetUint32Hex(ctx, 21, 0x0000, &fileisoid, &fileisoidpresent, 2, "File ISO ID (for DF) must have 2 bytes length")) {
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
 
-    uint32_t fileisoid = 0x0000;
-    res = arg_get_u32_hexstr_def_nlen(ctx, 21, 0x0000, &fileisoid, 2, true);
-    bool fileisoidpresent = (res == 1);
-    if (res == 2) {
-        PrintAndLogEx(ERR, "File ISO ID (for DF) must have 2 bytes length");
+    uint8_t readerid[250] = {0};
+    int readeridlen = sizeof(readerid);
+    CLIGetHexWithReturn(ctx, 22, readerid, &readeridlen);
+    if (readeridlen > 16) {
+        PrintAndLogEx(ERR, "ReaderID must be up to 16 bytes length.");
+        CLIParserFree(ctx);
+        return PM3_EINVARG;
+    }
+
+    uint8_t trkey[250] = {0};
+    int trkeylen = sizeof(trkey);
+    CLIGetHexWithReturn(ctx, 23, trkey, &trkeylen);
+    if (trkeylen > 0 && trkeylen != 16) {
+        PrintAndLogEx(ERR, "Transaction key must be 16 bytes length.");
         CLIParserFree(ctx);
         return PM3_EINVARG;
     }
@@ -5475,18 +4980,15 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
         return PM3_EINVARG;
     }
 
-    if (!isoidpresent) {
-        res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
-        if (res != PM3_SUCCESS) {
-            DropField();
-            return res;
-        }
-    } else {
-        res = DesfireSelectAndAuthenticateISO(&dctx, securechann, (appid != 0), appid, appisoid, fileisoid, noauth, verbose);
-        if (res != PM3_SUCCESS) {
-            DropField();
-            return res;
-        }
+    // get uid
+    if (trkeylen > 0)
+        DesfireGetCardUID(&dctx);
+
+    res = DesfireSelectAndAuthenticateW(&dctx, securechann, selectway, id, fileisoidpresent, fileisoid, noauth, verbose);
+    if (res != PM3_SUCCESS) {
+        DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
+        return res;
     }
 
     // ISO command set
@@ -5504,11 +5006,11 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
 
     // get file settings
     if (op == RFTAuto) {
-        FileSettingsS fsettings;
+        FileSettings_t fsettings;
 
         DesfireCommunicationMode commMode = dctx.commMode;
         DesfireSetCommMode(&dctx, DCMMACed);
-        res = DesfireGetFileSettingsStruct(&dctx, fnum, &fsettings);
+        res = DesfireFileSettingsStruct(&dctx, fnum, &fsettings);
         DesfireSetCommMode(&dctx, commMode);
 
         if (res == PM3_SUCCESS) {
@@ -5516,7 +5018,8 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
                 case 0x00:
                 case 0x01: {
                     op = RFTData;
-                    commit = (fsettings.fileType == 0x01);
+                    if (!commit)
+                        commit = (fsettings.fileType == 0x01);
                     break;
                 }
                 case 0x02: {
@@ -5547,6 +5050,12 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
             if (fsettings.fileCommMode != 0 && noauth)
                 PrintAndLogEx(WARNING, "File needs communication mode `%s` but there is no authentication", CLIGetOptionListStr(DesfireCommunicationModeOpts, fsettings.commMode));
 
+            if ((fsettings.rAccess < 0x0e && fsettings.rAccess != dctx.keyNum) && (fsettings.rwAccess < 0x0e && fsettings.rwAccess != dctx.keyNum))
+                PrintAndLogEx(WARNING, "File needs to be authenticated with key 0x%02x or 0x%02x but current authentication key is 0x%02x", fsettings.rAccess, fsettings.rwAccess, dctx.keyNum);
+
+            if (fsettings.rAccess == 0x0f && fsettings.rwAccess == 0x0f)
+                PrintAndLogEx(WARNING, "File access denied. All read access rights is 0x0f.");
+
             if (verbose)
                 PrintAndLogEx(INFO, "Got file type: %s. Option: %s. comm mode: %s",
                               GetDesfireFileType(fsettings.fileType),
@@ -5557,6 +5066,38 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
         }
     }
 
+    // CommitReaderID command
+    bool readeridpushed = false;
+    if (readeridlen > 0) {
+        uint8_t resp[250] = {0};
+        size_t resplen = 0;
+
+        DesfireCommunicationMode commMode = dctx.commMode;
+        DesfireSetCommMode(&dctx, DCMMACed);
+        res = DesfireCommitReaderID(&dctx, readerid, readeridlen, resp, &resplen);
+        DesfireSetCommMode(&dctx, commMode);
+
+        if (res == PM3_SUCCESS) {
+            PrintAndLogEx(INFO, _GREEN_("Commit Reader ID: "));
+            PrintAndLogEx(INFO, "Prev reader id encoded [%zu]: %s", resplen, sprint_hex(resp, resplen));
+
+            if (trkeylen > 0) {
+                uint8_t prevReaderID[CRYPTO_AES_BLOCK_SIZE] = {0};
+                DesfireDecodePrevReaderID(&dctx, trkey, transactionCounter, resp, prevReaderID);
+                PrintAndLogEx(INFO, "Prev reader id: %s", sprint_hex(prevReaderID, CRYPTO_AES_BLOCK_SIZE));
+            }
+
+            readeridpushed = true;
+            if (verbose)
+                PrintAndLogEx(INFO, "CommitReaderID " _GREEN_("OK"));
+        } else
+            PrintAndLogEx(WARNING, "Desfire CommitReaderID command " _RED_("error") ". Result: %d", res);
+    }
+
+    // iso chaining works in the lrp mode
+    dctx.isoChaining |= (dctx.secureChannel == DACLRP);
+
+    // write
     if (op == RFTData) {
         res = DesfireWriteFile(&dctx, fnum, offset, datalen, data);
         if (res != PM3_SUCCESS) {
@@ -5621,16 +5162,39 @@ static int CmdHF14ADesWriteData(const char *Cmd) {
     }
 
     // commit phase
-    if (commit) {
-        res = DesfireCommitTransaction(&dctx, false, 0);
+    if (commit || readeridpushed) {
+        uint8_t resp[250] = {0};
+        size_t resplen = 0;
+        DesfireSetCommMode(&dctx, DCMMACed);
+        res = DesfireCommitTransactionEx(&dctx, readeridpushed, 0x01, resp, &resplen);
         if (res != PM3_SUCCESS) {
             PrintAndLogEx(ERR, "Desfire CommitTransaction command " _RED_("error") ". Result: %d", res);
             DropField();
             return PM3_ESOFT;
         }
 
-        if (verbose)
+        if (verbose) {
+            if (readeridpushed)
+                PrintAndLogEx(INFO, "TMC and TMV[%zu]: %s", resplen, sprint_hex(resp, resplen));
             PrintAndLogEx(INFO, "Commit " _GREEN_("OK"));
+        }
+
+        if (resplen == 4 + 8) {
+            PrintAndLogEx(INFO, _GREEN_("Commit result:"));
+            uint32_t cnt = MemLeToUint4byte(&resp[0]);
+            transactionCounter = cnt;
+            if (dctx.secureChannel != DACLRP) {
+                PrintAndLogEx(SUCCESS, "Transaction counter: %d (0x%08x)", cnt, cnt);
+            } else {
+                // For composing TMC the two subparts are concatenated as follows: actTMC || sesTMC. Both subparts are represented LSB first.
+                // MF2DLHX0.pdf, 10.3.2.1 Transaction MAC Counter, page 41
+                uint32_t actTMC = MemLeToUint2byte(&resp[0]);
+                uint32_t sessTMC = MemLeToUint2byte(&resp[2]);
+                PrintAndLogEx(SUCCESS, "Session tr counter : %d (0x%04x)", sessTMC, sessTMC);
+                PrintAndLogEx(SUCCESS, "Actual tr counter  : %d (0x%04x)", actTMC, actTMC);
+            }
+            PrintAndLogEx(SUCCESS, "Transaction MAC    : %s", sprint_hex(&resp[4], 8));
+        }
     }
 
     PrintAndLogEx(INFO, "Write %s file %02x " _GREEN_("success"), CLIGetOptionListStr(DesfireReadFileTypeOpts, op), fnum);
@@ -5643,7 +5207,8 @@ static int CmdHF14ADesLsFiles(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfdes lsfiles",
                   "Show file list. Master key needs to be provided or flag --no-auth set (depend on cards settings).",
-                  "hf mfdes lsfiles --aid 123456 -> show file list for: app=123456 with defaults from `default` command");
+                  "hf mfdes lsfiles --aid 123456 -> show file list for: app=123456 with defaults from `default` command"
+                  "hf mfdes lsfiles --appisoid df01 --no-auth -> show files from desfire light");
 
     void *argtable[] = {
         arg_param_begin,
@@ -5656,8 +5221,9 @@ static int CmdHF14ADesLsFiles(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
@@ -5665,12 +5231,13 @@ static int CmdHF14ADesLsFiles(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 12);
+    bool noauth = arg_get_lit(ctx, 13);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -5679,13 +5246,14 @@ static int CmdHF14ADesLsFiles(const char *Cmd) {
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
-    FileListS FileList = {0};
+    FileList_t FileList = {0};
     size_t filescount = 0;
     bool isopresent = false;
     res = DesfireFillFileList(&dctx, FileList, &filescount, &isopresent);
@@ -5695,7 +5263,7 @@ static int CmdHF14ADesLsFiles(const char *Cmd) {
     }
 
     if (filescount == 0) {
-        PrintAndLogEx(INFO, "There is no files in the application %06x", appid);
+        PrintAndLogEx(INFO, "There is no files in the %s", DesfireWayIDStr(selectway, id));
         DropField();
         return res;
     }
@@ -5726,7 +5294,7 @@ static int CmdHF14ADesLsApp(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_lit0(NULL, "no-deep", "not to check authentication commands that avail for any application"),
         arg_lit0(NULL, "files",   "scan files and print file settings for each application"),
@@ -5740,9 +5308,9 @@ static int CmdHF14ADesLsApp(const char *Cmd) {
     bool nodeep = arg_get_lit(ctx, 12);
     bool scanfiles = arg_get_lit(ctx, 13);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, &securechann, (noauth) ? DCMPlain : DCMMACed, NULL);
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 0, 0, &securechann, (noauth) ? DCMPlain : DCMMACed, NULL, NULL);
     if (res) {
         CLIParserFree(ctx);
         return res;
@@ -5759,9 +5327,9 @@ static int CmdHF14ADesLsApp(const char *Cmd) {
         return res;
     }
 
-    PICCInfoS PICCInfo = {0};
+    PICCInfo_t PICCInfo = {0};
     AppListS AppList = {0};
-    DesfireFillAppList(&dctx, &PICCInfo, AppList, !nodeep, scanfiles);
+    DesfireFillAppList(&dctx, &PICCInfo, AppList, !nodeep, scanfiles, true);
 
     printf("\33[2K\r"); // clear current line before printing
     PrintAndLogEx(NORMAL, "");
@@ -5778,7 +5346,8 @@ static int CmdHF14ADesDump(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfdes dump",
                   "For each application show fil list and then file content. Key needs to be provided for authentication or flag --no-auth set (depend on cards settings).",
-                  "hf mfdes dump --aid 123456 -> show file dump for: app=123456 with channel defaults from `default` command");
+                  "hf mfdes dump --aid 123456 -> show file dump for: app=123456 with channel defaults from `default` command/n"
+                  "hf mfdes dump --appisoid df01 -s lrp -t aes --length 000090 -> lrp default settings with length limit");
 
     void *argtable[] = {
         arg_param_begin,
@@ -5791,8 +5360,10 @@ static int CmdHF14ADesDump(const char *Cmd) {
         arg_str0("i",  "kdfi",    "<kdfi>",  "KDF input (HEX 1-31 bytes)"),
         arg_str0("m",  "cmode",   "<plain/mac/encrypt>", "Communicaton mode: plain/mac/encrypt"),
         arg_str0("c",  "ccset",   "<native/niso/iso>", "Communicaton command set: native/niso/iso"),
-        arg_str0("s",  "schann",  "<d40/ev1/ev2>", "Secure channel: d40/ev1/ev2"),
+        arg_str0("s",  "schann",  "<d40/ev1/ev2/lrp>", "Secure channel: d40/ev1/ev2/lrp"),
         arg_str0(NULL, "aid",     "<app id hex>", "Application ID (3 hex bytes, big endian)"),
+        arg_str0(NULL, "appisoid", "<isoid hex>", "Application ISO ID (ISO DF ID) (2 hex bytes, big endian)."),
+        arg_str0("l", "length",   "<hex>", "Maximum length for read data files (3 hex bytes, big endian)."),
         arg_lit0(NULL, "no-auth", "execute without authentication"),
         arg_param_end
     };
@@ -5800,27 +5371,35 @@ static int CmdHF14ADesDump(const char *Cmd) {
 
     bool APDULogging = arg_get_lit(ctx, 1);
     bool verbose = arg_get_lit(ctx, 2);
-    bool noauth = arg_get_lit(ctx, 12);
+    bool noauth = arg_get_lit(ctx, 14);
 
-    DesfireContext dctx;
+    DesfireContext_t dctx;
     int securechann = defaultSecureChannel;
-    uint32_t appid = 0x000000;
-    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, &securechann, (noauth) ? DCMPlain : DCMMACed, &appid);
+    uint32_t id = 0x000000;
+    DesfireISOSelectWay selectway = ISW6bAID;
+    int res = CmdDesGetSessionParameters(ctx, &dctx, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, &securechann, (noauth) ? DCMPlain : DCMMACed, &id, &selectway);
     if (res) {
         CLIParserFree(ctx);
         return res;
     }
 
+    uint32_t maxlength = 0;
+    if (CLIGetUint32Hex(ctx, 13, 0, &maxlength, NULL, 3, "Length parameter must have 3 byte length")) {
+        CLIParserFree(ctx);
+        return PM3_EINVARG;
+    }
+
     SetAPDULogging(APDULogging);
     CLIParserFree(ctx);
 
-    res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+    res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
     if (res != PM3_SUCCESS) {
         DropField();
+        PrintAndLogEx(FAILED, "Select or authentication %s " _RED_("failed") ". Result [%d] %s", DesfireWayIDStr(selectway, id), res, DesfireAuthErrorToStr(res));
         return res;
     }
 
-    FileListS FileList = {0};
+    FileList_t FileList = {0};
     size_t filescount = 0;
     bool isopresent = false;
     res = DesfireFillFileList(&dctx, FileList, &filescount, &isopresent);
@@ -5830,12 +5409,13 @@ static int CmdHF14ADesDump(const char *Cmd) {
     }
 
     PrintAndLogEx(NORMAL, "");
-    PrintAndLogEx(SUCCESS, "Application " _CYAN_("%06x") " have " _GREEN_("%zu") " files", appid, filescount);
+    PrintAndLogEx(SUCCESS, "Application " _CYAN_("%s") " have " _GREEN_("%zu") " files", DesfireWayIDStr(selectway, id), filescount);
 
-    DesfirePrintAIDFunctions(appid);
+    if (selectway == ISW6bAID)
+        DesfirePrintAIDFunctions(id);
 
     if (filescount == 0) {
-        PrintAndLogEx(INFO, "There is no files in the application %06x", appid);
+        PrintAndLogEx(INFO, "There is no files in the application %s", DesfireWayIDStr(selectway, id));
         DropField();
         return res;
     }
@@ -5844,7 +5424,7 @@ static int CmdHF14ADesDump(const char *Cmd) {
     for (int i = 0; i < filescount; i++) {
         if (res != PM3_SUCCESS) {
             DesfireSetCommMode(&dctx, DCMPlain);
-            res = DesfireSelectAndAuthenticateEx(&dctx, securechann, appid, noauth, verbose);
+            res = DesfireSelectAndAuthenticateAppW(&dctx, securechann, selectway, id, noauth, verbose);
             if (res != PM3_SUCCESS) {
                 DropField();
                 return res;
@@ -5862,7 +5442,7 @@ static int CmdHF14ADesDump(const char *Cmd) {
         }
         DesfirePrintFileSettingsExtended(&FileList[i].fileSettings);
 
-        res = DesfileReadFileAndPrint(&dctx, FileList[i].fileNum, RFTAuto, 0, 0, noauth, verbose);
+        res = DesfileReadFileAndPrint(&dctx, FileList[i].fileNum, RFTAuto, 0, 0, maxlength, noauth, verbose);
     }
 
     DropField();
@@ -5881,13 +5461,13 @@ static command_t CommandTable[] = {
     {"getuid",           CmdHF14ADesGetUID,           IfPm3Iso14443a,  "Get uid from card"},
     {"default",          CmdHF14ADesDefault,          IfPm3Iso14443a,  "Set defaults for all the commands"},
     {"auth",             CmdHF14ADesAuth,             IfPm3Iso14443a,  "MIFARE DesFire Authentication"},
-    {"chk",              CmdHF14aDesChk,              IfPm3Iso14443a,  "[old]Check keys"},
+    {"chk",              CmdHF14aDesChk,              IfPm3Iso14443a,  "Check keys"},
+    {"detect",           CmdHF14aDesDetect,           IfPm3Iso14443a,  "Detect key type and tries to find one from the list"},
     {"freemem",          CmdHF14ADesGetFreeMem,       IfPm3Iso14443a,  "Get free memory size"},
     {"setconfig",        CmdHF14ADesSetConfiguration, IfPm3Iso14443a,  "Set card configuration"},
     {"formatpicc",       CmdHF14ADesFormatPICC,       IfPm3Iso14443a,  "Format PICC"},
     {"list",             CmdHF14ADesList,             AlwaysAvailable, "List DESFire (ISO 14443A) history"},
-//    {"ndefread",             CmdHF14aDesNDEFRead,             IfPm3Iso14443a,  "Prints NDEF records from card"},
-//    {"mad",             CmdHF14aDesMAD,             IfPm3Iso14443a,  "Prints MAD records from card"},
+    {"mad",              CmdHF14aDesMAD,              IfPm3Iso14443a,  "Prints MAD records / files from the card"},
     {"-----------",      CmdHelp,                     IfPm3Iso14443a,  "-------------------- " _CYAN_("Applications") " -------------------"},
     {"lsapp",            CmdHF14ADesLsApp,            IfPm3Iso14443a,  "Show all applications with files list"},
     {"getaids",          CmdHF14ADesGetAIDs,          IfPm3Iso14443a,  "Get Application IDs list"},

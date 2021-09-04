@@ -16,7 +16,6 @@
 #include "common.h"
 #include "mifare/desfirecore.h"
 #include "mifare/desfirecrypto.h"
-#include "mifare/desfire_crypto.h"
 #include "mifare/mifare4.h"
 
 typedef struct {
@@ -24,15 +23,15 @@ typedef struct {
     DesfireSecureChannel secureChannel;
     DesfireCommandSet cmdSet;
     DesfireCommunicationMode commMode;
-} AllowedChannelModesS;
+} AllowedChannelModes_t;
 
 typedef struct {
     uint8_t cmd;
     uint32_t len;
-} CmdHeaderLengthsS;
+} CmdHeaderLengths_t;
 
-void DesfireSecureChannelEncode(DesfireContext *ctx, uint8_t cmd, uint8_t *srcdata, size_t srcdatalen, uint8_t *dstdata, size_t *dstdatalen);
-void DesfireSecureChannelDecode(DesfireContext *ctx, uint8_t *srcdata, size_t srcdatalen, uint8_t respcode, uint8_t *dstdata, size_t *dstdatalen);
+void DesfireSecureChannelEncode(DesfireContext_t *ctx, uint8_t cmd, uint8_t *srcdata, size_t srcdatalen, uint8_t *dstdata, size_t *dstdatalen);
+void DesfireSecureChannelDecode(DesfireContext_t *ctx, uint8_t *srcdata, size_t srcdatalen, uint8_t respcode, uint8_t *dstdata, size_t *dstdatalen);
 
 bool PrintChannelModeWarning(uint8_t cmd, DesfireSecureChannel secureChannel, DesfireCommandSet cmdSet, DesfireCommunicationMode commMode);
 

@@ -44,7 +44,7 @@
 
 static int CmdHelp(const char *Cmd);
 
-uint8_t default_3des_keys[][16] = {
+static uint8_t default_3des_keys[][16] = {
     { 0x42, 0x52, 0x45, 0x41, 0x4b, 0x4d, 0x45, 0x49, 0x46, 0x59, 0x4f, 0x55, 0x43, 0x41, 0x4e, 0x21 }, // 3des std key
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, // all zeroes
     { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f }, // 0x00-0x0F
@@ -54,12 +54,12 @@ uint8_t default_3des_keys[][16] = {
     { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF } // 11 22 33
 };
 
-uint8_t default_pwd_pack[][4] = {
+static uint8_t default_pwd_pack[][4] = {
     {0xFF, 0xFF, 0xFF, 0xFF}, // PACK 0x00,0x00 -- factory default
     {0x4E, 0x45, 0x78, 0x54},
 };
 
-uint32_t UL_TYPES_ARRAY[] = {
+static uint32_t UL_TYPES_ARRAY[] = {
     UNKNOWN,    UL,          UL_C,        UL_EV1_48,       UL_EV1_128,      NTAG,
     NTAG_203,   NTAG_210,    NTAG_212,    NTAG_213,        NTAG_215,        NTAG_216,
     MY_D,       MY_D_NFC,    MY_D_MOVE,   MY_D_MOVE_NFC,   MY_D_MOVE_LEAN,  FUDAN_UL,
@@ -67,7 +67,7 @@ uint32_t UL_TYPES_ARRAY[] = {
     NTAG_213_C, NTAG_210u
 };
 
-uint8_t UL_MEMORY_ARRAY[ARRAYLEN(UL_TYPES_ARRAY)] = {
+static uint8_t UL_MEMORY_ARRAY[ARRAYLEN(UL_TYPES_ARRAY)] = {
     MAX_UL_BLOCKS,     MAX_UL_BLOCKS, MAX_ULC_BLOCKS, MAX_ULEV1a_BLOCKS, MAX_ULEV1b_BLOCKS,  MAX_NTAG_203,
     MAX_NTAG_203,      MAX_NTAG_210,  MAX_NTAG_212,   MAX_NTAG_213,      MAX_NTAG_215,       MAX_NTAG_216,
     MAX_UL_BLOCKS,     MAX_MY_D_NFC,  MAX_MY_D_MOVE,  MAX_MY_D_MOVE,     MAX_MY_D_MOVE_LEAN, MAX_UL_BLOCKS,
@@ -2148,7 +2148,7 @@ static int CmdHF14AMfUDump(const char *Cmd) {
     ul_print_type(tagtype, 0);
     PrintAndLogEx(SUCCESS, "Reading tag memory...");
     uint8_t keytype = 0;
-    if (has_auth_key) {
+    if (has_auth_key || has_pwd) {
         if (tagtype & UL_C)
             keytype = 1; //UL_C auth
         else
@@ -2520,8 +2520,13 @@ static int CmdHF14AMfURestore(const char *Cmd) {
 
         PrintAndLogEx(INFO, "authentication with keytype[%x]  %s\n", (uint8_t)(keytype & 0xff), sprint_hex(p_authkey, 4));
 
-        // otp, uid, lock, cfg1, cfg0, dynlockbits
+#if defined ICOPYX
+        // otp, uid, lock, dynlockbits, cfg0, cfg1, pwd, pack
+        uint8_t blocks[] = {3, 0, 1, 2, pages - 5, pages - 4, pages - 3, pages - 2, pages - 1};
+#else
+        // otp, uid, lock, dynlockbits, cfg0, cfg1
         uint8_t blocks[] = {3, 0, 1, 2, pages - 5, pages - 4, pages - 3};
+#endif
         for (uint8_t i = 0; i < ARRAYLEN(blocks); i++) {
             uint8_t b = blocks[i];
             memcpy(data, mem->data + (b * 4), 4);
@@ -2571,8 +2576,8 @@ static int CmdHF14AMfUSim(const char *Cmd) {
                   "ISO/IEC 14443 type A tag with 4,7 or 10 byte UID\n"
                   "from emulator memory.  See `hf mfu eload` first. \n"
                   "See `hf 14a sim -h` to see available types. You want 2 or 7 usually.",
-                  "hf mfu sim -t 2 --uid 1122344556677        -> MIFARE Ultralight\n"
-                  "hf mfu sim -t 7 --uid 1122344556677 -n 5   -> AMIIBO (NTAG 215),  pack 0x8080"
+                  "hf mfu sim -t 2 --uid 11223344556677        -> MIFARE Ultralight\n"
+                  "hf mfu sim -t 7 --uid 11223344556677 -n 5   -> AMIIBO (NTAG 215),  pack 0x8080"
                  );
 
     void *argtable[] = {

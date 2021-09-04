@@ -45,6 +45,7 @@ Here are the supported values you can assign to `PLATFORM` in `Makefile.platform
 |-----------------|--------------------------|
 | PM3RDV4 (def)   | Proxmark3 RDV4           |
 | PM3GENERIC      | Proxmark3 generic target |
+| PM3ICOPYX       | iCopy-X with XC3S100E    |
 
 By default `PLATFORM=PM3RDV4`.
 
@@ -97,6 +98,7 @@ Here are the supported values you can assign to `STANDALONE` in `Makefile.platfo
 | HF_ICECLASS     | iCLASS 4-1 mode  sim/read & dump/loclass/glitch & config to flashmem - Iceman1001
 | HF_LEGIC        | HF Legic Prime standalone - uhei
 | HF_MATTYRUN     | Mifare sniff/clone - Matías A. Ré Medina
+| HF_MFCSIM       | Simulate Mifare Classic 1k card storing in flashmem - Ray Lee
 | HF_MSDSAL  (def)| EMV Read and emulation - Salvador Mendoza
 | HF_REBLAY       | 14A relay over BT  - Salvador Mendoza
 | HF_TCPRST       | IKEA Rothult ST25TA, Standalone Master Key Dump/Emulation - Nick Draffen

@@ -268,7 +268,7 @@ int demodAWID(bool verbose) {
     }
     free(bits);
 
-    PrintAndLogEx(DEBUG, "DEBUG: AWID idx: %d, Len: %zu Printing Demod Buffer:", idx, size);
+    PrintAndLogEx(DEBUG, "DEBUG: AWID idx: %d, Len: %zu Printing DemodBuffer:", idx, size);
     if (g_debugMode) {
         printDemodBuff(0, false, false, true);
         printDemodBuff(0, false, false, false);
@@ -520,7 +520,7 @@ static int CmdAWIDBrute(const char *Cmd) {
     // main loop
     for (;;) {
 
-        if (!session.pm3_present) {
+        if (!g_session.pm3_present) {
             PrintAndLogEx(WARNING, "Device offline\n");
             return PM3_ENODATA;
         }
