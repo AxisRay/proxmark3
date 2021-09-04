@@ -461,15 +461,15 @@ Check column "offline" for their availability.
 |`hf mfp help            `|Y       |`This help`
 |`hf mfp info            `|N       |`Info about Mifare Plus tag`
 |`hf mfp wrp             `|N       |`Write Perso command`
-|`hf mfp initp           `|N       |`Fills all the card's keys`
+|`hf mfp initp           `|N       |`Fill all the card's keys in SL0 mode`
 |`hf mfp commitp         `|N       |`Move card to SL1 or SL3 mode`
 |`hf mfp auth            `|N       |`Authentication`
 |`hf mfp rdbl            `|N       |`Read blocks`
 |`hf mfp rdsc            `|N       |`Read sectors`
 |`hf mfp wrbl            `|N       |`Write blocks`
 |`hf mfp chk             `|N       |`Check keys`
-|`hf mfp mad             `|N       |`Checks and prints MAD`
-|`hf mfp ndefread        `|N       |`Prints NDEF records from card`
+|`hf mfp mad             `|N       |`Check and print MAD`
+|`hf mfp ndefread        `|N       |`Read and print NDEF records from card`
 
 
 ### hf mfu
@@ -838,7 +838,7 @@ Check column "offline" for their availability.
 |`lf hitag help          `|Y       |`This help`
 |`lf hitag eload         `|N       |`Load Hitag dump file into emulator memory`
 |`lf hitag list          `|Y       |`List Hitag trace history`
-|`lf hitag info          `|N       |`Tag information`
+|`lf hitag info          `|N       |`Hitag2 tag information`
 |`lf hitag reader        `|N       |`Act like a Hitag reader`
 |`lf hitag sim           `|N       |`Simulate Hitag transponder`
 |`lf hitag sniff         `|N       |`Eavesdrop Hitag communication`

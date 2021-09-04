@@ -216,7 +216,7 @@ typedef struct {
     uint8_t keylen;
     const char *desc;
     const char *value;
-} PACKED ndef_publickey_t;
+} ndef_publickey_t;
 
 static int ndef_print_signature(uint8_t *data, uint8_t data_len, uint8_t *signature, uint8_t sign_len) {
 
@@ -435,7 +435,7 @@ static int ndefDecodePayloadDeviceInfo(uint8_t *payload, size_t len) {
     n = *(p++);
     PrintAndLogEx(INFO, "Unique name... " _YELLOW_("%.*s"), n, p);
     p += n + 1;
-    n = *(p++);
+    p++;
     //uuid string
     // record.uuid_string = '123e4567-e89b-12d3-a456-426655440000'
     //  8-4-4-4-12
@@ -638,7 +638,7 @@ static int ndefDecodePayload(NDEFHeader_t *ndef) {
                 break;
             }
 
-            char *begin = calloc(ndef->TypeLen + 1,sizeof(char));
+            char *begin = calloc(ndef->TypeLen + 1, sizeof(char));
             memcpy(begin, ndef->Type, ndef->TypeLen);
             str_lower(begin);
 

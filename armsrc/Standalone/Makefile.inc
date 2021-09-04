@@ -101,3 +101,7 @@ endif
 ifneq (,$(findstring WITH_STANDALONE_HF_MFCSIM,$(APP_CFLAGS)))
     SRC_STANDALONE = hf_mfcsim.c
 endif
+ # WITH_STANDALONE_HF_NEWCAPS
+ifneq (,$(findstring WITH_STANDALONE_HF_NEWCAPS,$(APP_CFLAGS)))
+    SRC_STANDALONE = hf_newcaps.c
+endif

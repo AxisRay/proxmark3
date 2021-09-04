@@ -1056,7 +1056,7 @@ typedef struct {
     uint32_t (*Pwd)(uint8_t *uid);
     uint16_t (*Pack)(uint8_t *uid);
     const char *hint;
-} PACKED mfu_identify_t;
+} mfu_identify_t;
 
 static mfu_identify_t mfu_ident_table[] = {
     {
@@ -1840,7 +1840,7 @@ static int CmdHF14AMfURdBl(const char *Cmd) {
         arg_param_begin,
         arg_str0("k", "key", "<hex>", "key for authentication (UL-C 16 bytes, EV1/NTAG 4 bytes)"),
         arg_lit0("l", NULL, "swap entered key's endianness"),
-        arg_int1("b", "block", "<dec>", "block number to write"),
+        arg_int1("b", "block", "<dec>", "block number to read"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);

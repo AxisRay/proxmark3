@@ -449,13 +449,13 @@ static int CmdHFMFPWritePerso(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp wrp",
                   "Executes Write Perso command. Can be used in SL0 mode only.",
-                  "hf mfp wrp --ki 4000 --key 000102030405060708090a0b0c0d0e0f -> write key (00..0f) to key number 4000 \n"
-                  "hf mfp wrp --ki 4000 -> write default key(0xff..0xff) to key number 4000");
+                  "hf mfp wrp --ki 4000 --key 000102030405060708090a0b0c0d0e0f  -> write key (00..0f) to key number 4000 \n"
+                  "hf mfp wrp --ki 4000                                         -> write default key(0xff..0xff) to key number 4000");
 
     void *argtable[] = {
         arg_param_begin,
         arg_lit0("v", "verbose", "show internal data."),
-        arg_str1("i", "ki",  "<hex>", " key number, 2 hex bytes"),
+        arg_str1(NULL, "ki",  "<hex>", " key number, 2 hex bytes"),
         arg_strx0(NULL, "key", "<hex>", " key, 16 hex bytes"),
         arg_param_end
     };
@@ -515,8 +515,8 @@ static int CmdHFMFPInitPerso(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp initp",
                   "Executes Write Perso command for all card's keys. Can be used in SL0 mode only.",
-                  "hf mfp initp --key 000102030405060708090a0b0c0d0e0f -> fill all the keys with key (00..0f)\n"
-                  "hf mfp initp -vv -> fill all the keys with default key(0xff..0xff) and show all the data exchange");
+                  "hf mfp initp --key 000102030405060708090a0b0c0d0e0f  -> fill all the keys with key (00..0f)\n"
+                  "hf mfp initp -vv                                     -> fill all the keys with default key(0xff..0xff) and show all the data exchange");
 
     void *argtable[] = {
         arg_param_begin,
@@ -637,8 +637,8 @@ static int CmdHFMFPAuth(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp auth",
                   "Executes AES authentication command for Mifare Plus card",
-                  "hf mfp auth --ki 4000 --key 000102030405060708090a0b0c0d0e0f -> executes authentication\n"
-                  "hf mfp auth --ki 9003 --key FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF -v -> executes authentication and shows all the system data");
+                  "hf mfp auth --ki 4000 --key 000102030405060708090a0b0c0d0e0f      -> executes authentication\n"
+                  "hf mfp auth --ki 9003 --key FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF -v   -> executes authentication and shows all the system data");
 
     void *argtable[] = {
         arg_param_begin,
@@ -671,8 +671,8 @@ static int CmdHFMFPRdbl(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp rdbl",
                   "Reads several blocks from Mifare Plus card",
-                  "hf mfp rdbl --blk 0 --key 000102030405060708090a0b0c0d0e0f -> executes authentication and read block 0 data\n"
-                  "hf mfp rdbl --blk 1 -v -> executes authentication and shows sector 1 data with default key 0xFF..0xFF");
+                  "hf mfp rdbl --blk 0 --key 000102030405060708090a0b0c0d0e0f   -> executes authentication and read block 0 data\n"
+                  "hf mfp rdbl --blk 1 -v                                       -> executes authentication and shows sector 1 data with default key 0xFF..0xFF");
 
     void *argtable[] = {
         arg_param_begin,
@@ -784,16 +784,16 @@ static int CmdHFMFPRdsc(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp rdsc",
                   "Reads one sector from Mifare Plus card",
-                  "hf mfp rdsc --sn 0 --key 000102030405060708090a0b0c0d0e0f -> executes authentication and read sector 0 data\n"
-                  "hf mfp rdsc --sn 1 -v -> executes authentication and shows sector 1 data with default key");
+                  "hf mfp rdsc -s 0 --key 000102030405060708090a0b0c0d0e0f   -> executes authentication and read sector 0 data\n"
+                  "hf mfp rdsc -s 1 -v                                       -> executes authentication and shows sector 1 data with default key");
 
     void *argtable[] = {
         arg_param_begin,
-        arg_lit0("v", "verbose", "show internal data."),
-        arg_lit0("b", "keyb", "use key B (by default keyA)."),
-        arg_lit0("p", "plain", "plain communication mode between reader and card."),
-        arg_int1(NULL, "sn", "<dec>", "sector number (0..255)"),
-        arg_str0("k", "key", "<hex>", "key, 16 hex bytes"),
+        arg_lit0("v",  "verbose", "show internal data."),
+        arg_lit0("b",  "keyb",    "use key B (by default keyA)."),
+        arg_lit0("p",  "plain",   "plain communication mode between reader and card."),
+        arg_int1("s",  "sn",      "<dec>", "sector number (0..255)"),
+        arg_str0("k",  "key",     "<hex>", "key, 16 hex bytes"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
@@ -880,17 +880,17 @@ static int CmdHFMFPWrbl(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp wrbl",
                   "Writes one block to Mifare Plus card",
-                  "hf mfp wrbl --blk 1 -d ff0000000000000000000000000000ff --key 000102030405060708090a0b0c0d0e0f -> writes block 1 data\n"
-                  "hf mfp wrbl --blk 2 -d ff0000000000000000000000000000ff -v -> writes block 2 data with default key 0xFF..0xFF"
+                  "hf mfp wrbl --blk 1 -d ff0000000000000000000000000000ff --key 000102030405060708090a0b0c0d0e0f -> write block 1 data\n"
+                  "hf mfp wrbl --blk 2 -d ff0000000000000000000000000000ff -v                                     -> write block 2 data with default key 0xFF..0xFF"
                  );
 
     void *argtable[] = {
         arg_param_begin,
-        arg_lit0("v", "verbose", "show internal data."),
-        arg_lit0("b", "keyb", "use key B (by default keyA)."),
-        arg_int1(NULL, "blk", "<dec>", "block number (0..255)"),
-        arg_str1("d", "data", "<hex>", "data, 16 hex bytes"),
-        arg_str0("k", "key", "<hex>", "key, 16 hex bytes"),
+        arg_lit0("v",  "verbose", "show internal data."),
+        arg_lit0("b",  "keyb",    "use key B (by default keyA)."),
+        arg_int1(NULL, "blk",     "<dec>", "block number (0..255)"),
+        arg_str1("d",  "data",    "<hex>", "data, 16 hex bytes"),
+        arg_str0("k",  "key",     "<hex>", "key, 16 hex bytes"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, false);
@@ -1091,11 +1091,11 @@ static int CmdHFMFPChk(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp chk",
                   "Checks keys with Mifare Plus card.",
-                  "hf mfp chk -k 000102030405060708090a0b0c0d0e0f -> check key on sector 0 as key A and B\n"
-                  "hf mfp chk -s 2 -a -> check default key list on sector 2, key A\n"
-                  "hf mfp chk -d mfp_default_keys -s0 -e6 -> check keys from dictionary against sectors 0-6\n"
-                  "hf mfp chk --pattern1b -j keys -> check all 1-byte keys pattern and save found keys to json\n"
-                  "hf mfp chk --pattern2b --startp2b FA00 -> check all 2-byte keys pattern. Start from key FA00FA00...FA00");
+                  "hf mfp chk -k 000102030405060708090a0b0c0d0e0f  -> check key on sector 0 as key A and B\n"
+                  "hf mfp chk -s 2 -a                              -> check default key list on sector 2, key A\n"
+                  "hf mfp chk -d mfp_default_keys -s0 -e6          -> check keys from dictionary against sectors 0-6\n"
+                  "hf mfp chk --pattern1b -j keys                  -> check all 1-byte keys pattern and save found keys to json\n"
+                  "hf mfp chk --pattern2b --startp2b FA00          -> check all 2-byte keys pattern. Start from key FA00FA00...FA00");
 
     void *argtable[] = {
         arg_param_begin,
@@ -1105,9 +1105,9 @@ static int CmdHFMFPChk(const char *Cmd) {
         arg_int0("e",  "endsec",    "End sector Num (0..255)", NULL),
         arg_str0("k",  "key",       "<Key>", "Key for checking (HEX 16 bytes)"),
         arg_str0("d",  "dict",      "<file>", "file with keys dictionary"),
-        arg_lit0(NULL,  "pattern1b", "check all 1-byte combinations of key (0000...0000, 0101...0101, 0202...0202, ...)"),
-        arg_lit0(NULL,  "pattern2b", "check all 2-byte combinations of key (0000...0000, 0001...0001, 0002...0002, ...)"),
-        arg_str0(NULL,  "startp2b",  "<Pattern>", "Start key (2-byte HEX) for 2-byte search (use with `--pattern2b`)"),
+        arg_lit0(NULL, "pattern1b", "check all 1-byte combinations of key (0000...0000, 0101...0101, 0202...0202, ...)"),
+        arg_lit0(NULL, "pattern2b", "check all 2-byte combinations of key (0000...0000, 0001...0001, 0002...0002, ...)"),
+        arg_str0(NULL, "startp2b",  "<Pattern>", "Start key (2-byte HEX) for 2-byte search (use with `--pattern2b`)"),
         arg_str0("j",  "json",      "<file>",  "json file to save keys"),
         arg_lit0("v",  "verbose",   "verbose mode."),
         arg_param_end
@@ -1323,17 +1323,17 @@ static int CmdHFMFPMAD(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp mad",
                   "Checks and prints Mifare Application Directory (MAD)",
-                  "hf mfp mad -> shows MAD if exists\n"
-                  "hf mfp mad -a e103 -k d3f7d3f7d3f7d3f7d3f7d3f7d3f7d3f7 -> shows NDEF data if exists");
+                  "hf mfp mad\n"
+                  "hf mfp mad --aid e103 -k d3f7d3f7d3f7d3f7d3f7d3f7d3f7d3f7  -> read and print NDEF data from MAD aid");
 
     void *argtable[] = {
         arg_param_begin,
         arg_lit0("v",  "verbose",  "show technical data"),
-        arg_str0(NULL,    "aid",      "<aid>", "print all sectors with aid"),
+        arg_str0(NULL, "aid",      "<aid>", "print all sectors with aid"),
         arg_str0("k",  "key",      "<key>", "key for printing sectors"),
         arg_lit0("b",  "keyb",     "use key B for access printing sectors (by default: key A)"),
-        arg_lit0(NULL,    "be",       "(optional, BigEndian)"),
-        arg_lit0(NULL,    "dch",      "decode Card Holder information"),
+        arg_lit0(NULL, "be",       "(optional, BigEndian)"),
+        arg_lit0(NULL, "dch",      "decode Card Holder information"),
         arg_param_end
     };
     CLIExecWithReturn(ctx, Cmd, argtable, true);
@@ -1463,14 +1463,14 @@ int CmdHFMFPNDEFRead(const char *Cmd) {
     CLIParserContext *ctx;
     CLIParserInit(&ctx, "hf mfp ndefread",
                   "Prints NFC Data Exchange Format (NDEF)",
-                  "hf mfp ndefread -> shows NDEF data\n"
-                  "hf mfp ndefread -vv -> shows NDEF parsed and raw data\n"
-                  "hf mfp ndefread -a e103 -k d3f7d3f7d3f7d3f7d3f7d3f7d3f7d3f7 -> shows NDEF data with custom AID and key");
+                  "hf mfp ndefread \n"
+                  "hf mfp ndefread -vv                                            -> shows NDEF parsed and raw data\n"
+                  "hf mfp ndefread --aid e103 -k d3f7d3f7d3f7d3f7d3f7d3f7d3f7d3f7 -> shows NDEF data with custom AID and key");
 
     void *argtable[] = {
         arg_param_begin,
         arg_litn("v",  "verbose",  0, 2, "show technical data"),
-        arg_str0(NULL,    "aid",      "<aid>", "replace default aid for NDEF"),
+        arg_str0(NULL, "aid",      "<aid>", "replace default aid for NDEF"),
         arg_str0("k",  "key",      "<key>", "replace default key for NDEF"),
         arg_lit0("b",  "keyb",     "use key B for access sectors (by default: key A)"),
         arg_param_end
@@ -1577,15 +1577,15 @@ static command_t CommandTable[] = {
     {"help",             CmdHelp,                 AlwaysAvailable, "This help"},
     {"info",             CmdHFMFPInfo,            IfPm3Iso14443a,  "Info about Mifare Plus tag"},
     {"wrp",              CmdHFMFPWritePerso,      IfPm3Iso14443a,  "Write Perso command"},
-    {"initp",            CmdHFMFPInitPerso,       IfPm3Iso14443a,  "Fills all the card's keys"},
+    {"initp",            CmdHFMFPInitPerso,       IfPm3Iso14443a,  "Fill all the card's keys in SL0 mode"},
     {"commitp",          CmdHFMFPCommitPerso,     IfPm3Iso14443a,  "Move card to SL1 or SL3 mode"},
     {"auth",             CmdHFMFPAuth,            IfPm3Iso14443a,  "Authentication"},
     {"rdbl",             CmdHFMFPRdbl,            IfPm3Iso14443a,  "Read blocks"},
     {"rdsc",             CmdHFMFPRdsc,            IfPm3Iso14443a,  "Read sectors"},
     {"wrbl",             CmdHFMFPWrbl,            IfPm3Iso14443a,  "Write blocks"},
     {"chk",              CmdHFMFPChk,             IfPm3Iso14443a,  "Check keys"},
-    {"mad",              CmdHFMFPMAD,             IfPm3Iso14443a,  "Checks and prints MAD"},
-    {"ndefread",         CmdHFMFPNDEFRead,        IfPm3Iso14443a,  "Prints NDEF records from card"},
+    {"mad",              CmdHFMFPMAD,             IfPm3Iso14443a,  "Check and print MAD"},
+    {"ndefread",         CmdHFMFPNDEFRead,        IfPm3Iso14443a,  "Read and print NDEF records from card"},
     {NULL,               NULL,                    0, NULL}
 };
 
